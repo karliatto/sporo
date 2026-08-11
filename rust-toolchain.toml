@@ -1,0 +1,4 @@
+# The ESP32 is Xtensa, which upstream rustc does not target. `espup install`
+# provides this forked toolchain along with the xtensa-esp32-elf linker.
+[toolchain]
+channel = "esp"
