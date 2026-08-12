@@ -9,13 +9,21 @@ comes from Espressif's fork:
 
 ```bash
 cargo install espup espflash
-espup install
+espup install \
+  --toolchain-version 1.95.0.0 \
+  --crosstool-toolchain-version 15.2.0_20250920 \
+  --name esp-1.95.0.0
 source ~/export-esp.sh    # needed in every shell that builds this
 ```
 
-`espup install` downloads the forked Rust toolchain (installed as the `esp`
-channel, which `rust-toolchain.toml` selects) and the `xtensa-esp32-elf` linker.
-It is a large download the first time.
+`espup install` downloads the forked Rust toolchain (installed under the name
+[rust-toolchain.toml](rust-toolchain.toml) selects) and the `xtensa-esp32-elf`
+linker. It is a large download the first time. The versions are pinned — see
+[Reproducible builds](#reproducible-builds) for why, and what to do when
+bumping them.
+
+Inside the Nix dev shell (`nix develop`) the versions are checked on entry, and
+the shell refuses to start if they do not match.
 
 `build.rs` checks for the linker up front, so forgetting to source
 `export-esp.sh` gives you a one-line error instead of a wall of linker failures.
@@ -36,6 +44,32 @@ Or drive cargo directly — `cargo run` flashes via the runner configured in
 cargo build --release
 cargo run --release
 ```
+
+## Reproducible builds
+
+Two people building the same commit **inside the Nix dev shell** get a
+byte-identical firmware image, on different machines and under different home
+directories. Prove it:
+
+```bash
+make check-reproducible   # builds twice from clean, compares the flashed .bin
+```
+
+The guarantee is scoped to `nix develop`. The toolchain still lives outside the
+Nix store — espup puts it in `~/.rustup` and `~/.espressif`, so `flake.lock`
+cannot pin it — which is why the shell asserts the versions instead. Building
+outside the shell with a different compiler will silently produce a different
+image.
+
+### Bumping the toolchain
+
+Three places must move together, or the shell will refuse to start:
+
+1. `ESP_RUST_VERSION` / `ESP_GCC_VERSION` in [flake.nix](flake.nix)
+2. `channel` in [rust-toolchain.toml](rust-toolchain.toml)
+3. The `espup install` command above
+
+Then re-run `espup install` with the new versions and `make check-reproducible`.
 
 ## Hardware
 

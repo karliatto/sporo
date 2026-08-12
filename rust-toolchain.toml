@@ -1,4 +1,13 @@
 # The ESP32 is Xtensa, which upstream rustc does not target. `espup install`
 # provides this forked toolchain along with the xtensa-esp32-elf linker.
+#
+# Pinned by version rather than the bare `esp` name, which would mean "whatever
+# espup installed last". Reproducible builds need a fixed compiler: `build-std`
+# recompiles `core` with it, and the toolchain commit hash is baked into the
+# firmware's panic strings. Install it with the command flake.nix prints.
+#
+# No `components` key here: this is a *custom* rustup toolchain, so rustup
+# cannot manage components for it. `rust-src`, which `build-std` needs, already
+# ships inside the espup toolchain.
 [toolchain]
-channel = "esp"
+channel = "esp-1.95.0.0"

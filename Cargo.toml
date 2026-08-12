@@ -44,3 +44,8 @@ codegen-units = 1
 debug = 2
 lto = "fat"
 opt-level = "s"
+
+# Rewrite build-machine paths to stable, content-addressed ones, so the firmware
+# does not depend on `$HOME`. This covers the debug info too, which is why
+# `debug = 2` above is free to keep.
+trim-paths = "all"

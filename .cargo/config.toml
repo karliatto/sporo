@@ -7,3 +7,8 @@ rustflags = ["-C", "link-arg=-nostartfiles"]
 
 [unstable]
 build-std = ["core"]
+
+# Enables the `trim-paths` profile option. Without it the absolute paths of the
+# cargo registry and the rustup sysroot end up in `.rodata` (via panic
+# locations), so the flashed image differs between machines. See README.
+trim-paths = true
