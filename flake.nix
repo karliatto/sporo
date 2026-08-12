@@ -10,15 +10,39 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+
+        # Bumping the toolchain means moving these two, rust-toolchain.toml, and
+        # the pin the non-Nix CI job asserts. They feed both the installer below
+        # and the shellHook's assertion, so those two can never disagree.
+        espRustVersion = "1.95.0.0";
+        espGccVersion = "15.2.0_20250920";
+
+        # The one command that installs the pinned Xtensa toolchain, used by
+        # humans on first checkout and by CI on a cache miss. It has to live
+        # outside the dev shell: the shellHook below refuses to start until the
+        # toolchain is present, so it cannot be the thing that installs it.
+        install-esp-toolchain = pkgs.writeShellApplication {
+          name = "install-esp-toolchain";
+          # espup unpacks into ~/.rustup, which rustup expects to own.
+          runtimeInputs = [ pkgs.espup pkgs.rustup ];
+          text = ''
+            espup install \
+              --toolchain-version ${espRustVersion} \
+              --crosstool-toolchain-version ${espGccVersion} \
+              --name esp-${espRustVersion}
+          '';
+        };
       in
       {
+        packages.install-esp-toolchain = install-esp-toolchain;
+
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             rustup
             espup
 
             # Flashing and the serial monitor. `cargo run` invokes this via the
-            # runner configured in .cargo/config.toml.
+            # runner configured in firmware/.cargo/config.toml.
             espflash
 
             # `make build | flash | monitor`
@@ -39,20 +63,18 @@
             #
             # Reproducible builds need a fixed compiler anyway -- `build-std`
             # recompiles `core` with it, and its commit hash is baked into the
-            # firmware -- so we pin the versions here and refuse to start if the
-            # installed ones differ. That assertion is what makes "I built it in
-            # the Nix shell" a checkable claim rather than a hope.
+            # firmware -- so the versions are pinned at the top of this flake and
+            # this shell refuses to start if the installed ones differ. That
+            # assertion is what makes "I built it in the Nix shell" a checkable
+            # claim rather than a hope.
             #
-            # Bumping the toolchain means moving three things together: these
-            # variables, rust-toolchain.toml, and the espup command below.
-            ESP_RUST_VERSION=1.95.0.0
-            ESP_GCC_VERSION=15.2.0_20250920
+            # Interpolated from the pins at the top of this flake, so the
+            # assertions below check exactly what install-esp-toolchain installs.
+            ESP_RUST_VERSION=${espRustVersion}
+            ESP_GCC_VERSION=${espGccVersion}
 
             spore_install_cmd() {
-              echo "      espup install \\"
-              echo "        --toolchain-version $ESP_RUST_VERSION \\"
-              echo "        --crosstool-toolchain-version $ESP_GCC_VERSION \\"
-              echo "        --name esp-$ESP_RUST_VERSION"
+              echo "      nix run .#install-esp-toolchain"
             }
 
             echo "Spore dev shell"

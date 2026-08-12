@@ -33,9 +33,6 @@ jobs:
           buildtargets: esp32 # skip esp32s2/esp32s3, we only build esp32
           ldproxy: false # only needed for std / esp-idf builds
 
-      # A wrong `name` above fails loudly on the next cargo call, but a wrong or
-      # ignored `version` would install `latest` under the pinned name and drift
-      # in silence. Same assertion the flake.nix shellHook makes locally.
       - name: Verify toolchain pin
         run: |
           expected=1.95.0.0
@@ -48,11 +45,55 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Format
-        run: cargo fmt --check
+        run: make fmt-check
 
-      # The build gate: a compile failure fails the job.
+      - name: Test
+        run: make test
+
       - name: Build
         run: make build
 
       - name: Clippy
-        run: cargo clippy --release -- -D warnings
+        run: make clippy
+
+  build-nix:
+    name: reproducible build (nix develop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # espup installs outside the Nix store -- into ~/.rustup and ~/.espressif
+      # -- so flake.lock cannot pin it and every run would otherwise re-download
+      # it. Keyed on flake.nix, which holds both version pins: bumping the
+      # toolchain changes the key and refills the cache.
+      - name: Cache Xtensa toolchain
+        id: esp-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup
+            ~/.espressif
+            ~/export-esp.sh
+          key: esp-toolchain-${{ runner.os }}-${{ hashFiles('flake.nix') }}
+
+      - name: Install Xtensa toolchain
+        if: steps.esp-cache.outputs.cache-hit != 'true'
+        run: nix run .#install-esp-toolchain
+
+      - name: Format
+        run: nix develop --command make fmt-check
+
+      - name: Test
+        run: nix develop --command make test
+
+      - name: Clippy
+        run: nix develop --command make clippy
+
+      - name: Reproducible build
+        run: nix develop --command make check-reproducible
