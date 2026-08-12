@@ -2,7 +2,6 @@
 #![no_main]
 
 mod keypad;
-mod word_entry;
 
 use embedded_graphics::{
     pixelcolor::Rgb565,
@@ -16,6 +15,7 @@ use esp_hal::{
     delay::Delay,
     gpio::{Input, InputConfig, Level, Output, OutputConfig, Pin as _, Pull},
     main,
+    rng::{Trng, TrngSource},
     spi::{
         master::{Config as SpiConfig, Spi},
         Mode,
@@ -36,10 +36,13 @@ use u8g2_fonts::{
     Content, FontRenderer,
 };
 
-use crate::{
-    keypad::Keypad,
-    word_entry::{WordEntry, ALPHABET, ALPHABET_TEXT, MAX_WORD_LEN, WORD_COUNT},
+use spore_core::{
+    bip39::{self, Mnemonic, WORD_COUNT_TOTAL},
+    bip39_wordlist::LetterSet,
+    word_entry::{WordEntry, ALPHABET, ALPHABET_TEXT, KEY_DELETE, MAX_WORD_LEN, WORD_COUNT},
 };
+
+use crate::keypad::Keypad;
 
 // Required by the ESP-IDF second-stage bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -63,9 +66,20 @@ const INSTRUCTION_TEXT: &str = "press any key";
 const HINT_TEXT: &str = "4/6 pick  5 add  * del  # next";
 const DONE_TEXT: &str = "phrase complete  * to edit";
 
+/// Shown when `#` is pressed on a spelling several words share. Since a spelling
+/// that matches nothing cannot be typed, that is the only way to get here, so
+/// the instruction is to carry on rather than to correct anything.
+const REJECT_TEXT: &str = "several words start so";
+
 const BACKGROUND_COLOR: Rgb565 = Rgb565::BLACK;
 const TEXT_COLOR: Rgb565 = Rgb565::WHITE;
 const ACCENT_COLOR: Rgb565 = Rgb565::CYAN;
+const WARNING_COLOR: Rgb565 = Rgb565::CSS_ORANGE;
+
+/// Letters that would spell something no word starts with. Dim rather than
+/// hidden: the alphabet stays a fixed strip, so the letters that are available
+/// do not shuffle sideways as the word grows.
+const DIM_COLOR: Rgb565 = Rgb565::new(8, 16, 8);
 
 /// Margin kept clear on each side when sizing text to the screen.
 const HORIZONTAL_MARGIN: u32 = 8;
@@ -81,6 +95,24 @@ const ALPHABET_FROM_BOTTOM: i32 = 40;
 /// strip. Colour alone is too easy to lose at this size.
 const CURSOR_BAR_OFFSET: i32 = 8;
 const CURSOR_BAR_HEIGHT: u32 = 2;
+
+/// Shape of the finished-phrase grid. Twelve words in six rows of two is the
+/// only arrangement that fits 240x135 at a size still worth reading: three
+/// columns leaves too little width for an 8-letter word beside its number.
+const WORDLIST_ROWS: usize = 6;
+const WORDLIST_COLUMNS: usize = WORD_COUNT_TOTAL / WORDLIST_ROWS;
+
+/// Width reserved for the number, wide enough for two digits right-aligned, plus
+/// the gap to the word that starts after it.
+const WORDLIST_NUMBER_WIDTH: i32 = 13;
+const WORDLIST_NUMBER_GAP: i32 = 4;
+
+/// Gap above the first row, and the strip left free at the bottom for the hint.
+const WORDLIST_TOP: i32 = 5;
+const WORDLIST_HINT_SPACE: i32 = 16;
+
+// Three columns would silently overlap rather than fail to build.
+const _: () = assert!(WORDLIST_ROWS * WORDLIST_COLUMNS == WORD_COUNT_TOTAL);
 
 /// Candidate faces for the brand mark, largest first; [`best_fit_font`] picks
 /// the biggest that fits. LogiSoSo is a wide geometric sans — deliberately
@@ -114,6 +146,8 @@ static HEADER_FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_courR10_
 enum Screen {
     Home,
     Words,
+    /// The finished phrase.
+    Wordlist,
 }
 
 #[main]
@@ -185,11 +219,25 @@ fn main() -> ! {
         ],
     );
 
+    // The ESP32's RNG only returns true random numbers while a physical noise
+    // source is feeding it — the RF subsystem, or the SAR ADC as used here.
+    // Without one it degrades to a PRNG, silently, which is the wrong way for a
+    // seed generator to fail. Holding `TrngSource` for the rest of `main` keeps
+    // the entropy source alive; dropping it would take the guarantee with it.
+    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
+    let trng = Trng::try_new().expect("TrngSource is alive for the rest of main");
+
     show_home_screen(&mut display);
 
     let mut entry = WordEntry::new();
     let mut screen = Screen::Home;
     let mut button_was_down = false;
+
+    // Drawn once per phrase rather than per completion. Going back with `*` to
+    // check a word and accepting it again would otherwise draw fresh bits and
+    // change the final word — after the user had written it down. The board
+    // button starts a new phrase, and takes this with it.
+    let mut extra_entropy: Option<u8> = None;
 
     loop {
         // Redrawing is a full-screen blit, so it only ever happens on an event
@@ -206,6 +254,28 @@ fn main() -> ! {
                 }
                 Screen::Words => {
                     if entry.handle_key(key) {
+                        // The last word completes the phrase, so derive the
+                        // twelfth here — once, on the transition — and move on.
+                        if entry.is_complete() {
+                            let extra = *extra_entropy.get_or_insert_with(|| {
+                                let mut byte = [0u8; 1];
+                                trng.read(&mut byte);
+                                byte[0]
+                            });
+
+                            let mnemonic = derive_mnemonic(&entry, extra);
+                            show_wordlist_screen(&mut display, &mnemonic);
+                            screen = Screen::Wordlist;
+                        } else {
+                            show_word_screen(&mut display, &entry);
+                        }
+                    }
+                }
+                // Nothing to pick here; `*` is the way back, reopening the last
+                // word for editing exactly as it does on the entry screen.
+                Screen::Wordlist => {
+                    if key == KEY_DELETE && entry.handle_key(KEY_DELETE) {
+                        screen = Screen::Words;
                         show_word_screen(&mut display, &entry);
                     }
                 }
@@ -219,6 +289,7 @@ fn main() -> ! {
         if button_is_down && !button_was_down {
             println!("button pressed: back to home");
             entry = WordEntry::new();
+            extra_entropy = None;
             screen = Screen::Home;
             show_home_screen(&mut display);
         }
@@ -294,62 +365,144 @@ where
         )
         .expect("progress render failed");
 
-    let previous = entry.accepted().last().map(|word| word.as_str());
-    let word_center = Point::new(center.x, center.y - 12);
-
-    if entry.is_complete() {
-        // There is no cursor left to place and `5` does nothing, so a strip
-        // with a letter picked out would only be a lie. The last word takes the
-        // middle instead: it is the one `*` reopens.
-        draw_word(
-            display,
-            previous.unwrap_or_default(),
-            None,
-            word_center,
-            usable_width,
-        );
-    } else {
-        // The word just accepted, kept in the corner as a check that it went in
-        // as intended — `*` reopens it if it didn't.
-        if let Some(previous) = previous {
-            HEADER_FONT
-                .render_aligned(
-                    previous,
-                    Point::new(right, HEADER_MARGIN),
-                    VerticalPosition::Top,
-                    HorizontalAlignment::Right,
-                    FontColor::Transparent(TEXT_COLOR),
-                    display,
-                )
-                .expect("previous word render failed");
-        }
-
-        draw_word(
-            display,
-            entry.current(),
-            entry.accepts_letter().then(|| entry.selected()),
-            word_center,
-            usable_width,
-        );
-        draw_alphabet(
-            display,
-            entry.cursor(),
-            center.x,
-            bottom - ALPHABET_FROM_BOTTOM,
-            usable_width,
-        );
+    // The word just accepted, kept in the corner as a check that it went in as
+    // intended — `*` reopens it if it didn't. Accepting the eleventh moves
+    // straight to the wordlist screen, so this one never renders a complete
+    // phrase.
+    if let Some(previous) = entry.accepted().last() {
+        HEADER_FONT
+            .render_aligned(
+                previous.as_str(),
+                Point::new(right, HEADER_MARGIN),
+                VerticalPosition::Top,
+                HorizontalAlignment::Right,
+                FontColor::Transparent(TEXT_COLOR),
+                display,
+            )
+            .expect("previous word render failed");
     }
 
-    let hint = if entry.is_complete() {
-        DONE_TEXT
+    // A refused word is coloured rather than moved or cleared: it is still the
+    // word being spelled, and the next keypress carries on from it.
+    let word_color = if entry.rejected() {
+        WARNING_COLOR
     } else {
-        HINT_TEXT
+        TEXT_COLOR
+    };
+
+    draw_word(
+        display,
+        entry.current(),
+        entry.selected(),
+        word_color,
+        Point::new(center.x, center.y - 12),
+        usable_width,
+    );
+    draw_alphabet(
+        display,
+        entry.cursor(),
+        entry.reachable(),
+        center.x,
+        bottom - ALPHABET_FROM_BOTTOM,
+        usable_width,
+    );
+
+    let (hint, hint_color) = if entry.rejected() {
+        (REJECT_TEXT, WARNING_COLOR)
+    } else {
+        (HINT_TEXT, ACCENT_COLOR)
     };
 
     best_fit_font(&BODY_FONTS, hint, usable_width)
         .render_aligned(
             hint,
             Point::new(center.x, bottom - 6),
+            VerticalPosition::Bottom,
+            HorizontalAlignment::Center,
+            FontColor::Transparent(hint_color),
+            display,
+        )
+        .expect("hint render failed");
+}
+
+/// Draws the fresh entropy the final word carries and completes the phrase.
+///
+/// Called once, on the transition into [`Screen::Wordlist`] — drawing on every
+/// redraw would change the last word each time the screen refreshed.
+fn derive_mnemonic(entry: &WordEntry, extra_entropy: u8) -> Mnemonic {
+    let mnemonic = bip39::complete(entry.accepted(), extra_entropy)
+        .expect("every accepted word was resolved against the wordlist");
+
+    // Debug aid for bring-up. A real wallet must never put a seed phrase on a
+    // wire: anything with a serial cable attached can read this.
+    println!("accepted: {:?}", entry.accepted());
+    println!("mnemonic: {:?}", mnemonic);
+
+    mnemonic
+}
+
+/// The finished phrase, numbered, in two columns read top to bottom. The derived
+/// word is accented: it is the one the user did not type and cannot check
+/// against their own notes.
+fn show_wordlist_screen<D>(display: &mut D, mnemonic: &Mnemonic)
+where
+    D: DrawTarget<Color = Rgb565>,
+    D::Error: core::fmt::Debug,
+{
+    display.clear(BACKGROUND_COLOR).expect("clear failed");
+
+    let bounds = display.bounding_box();
+    let center = bounds.center();
+    let bottom = bounds.size.height as i32;
+    let usable_width = bounds.size.width.saturating_sub(HORIZONTAL_MARGIN * 2);
+
+    let column_width = bounds.size.width as i32 / WORDLIST_COLUMNS as i32;
+    let row_height = (bottom - WORDLIST_TOP - WORDLIST_HINT_SPACE) / WORDLIST_ROWS as i32;
+
+    for (position, word) in mnemonic.iter().enumerate() {
+        // Column-major: 1-6 down the left, 7-12 down the right.
+        let column = position / WORDLIST_ROWS;
+        let row = position % WORDLIST_ROWS;
+
+        let left = column as i32 * column_width + HORIZONTAL_MARGIN as i32;
+        let y = WORDLIST_TOP + row as i32 * row_height;
+
+        // The number is right-aligned and the word left-aligned from a fixed
+        // offset, so the words line up in a column whether the number is one
+        // digit or two.
+        HEADER_FONT
+            .render_aligned(
+                format_args!("{}", position + 1),
+                Point::new(left + WORDLIST_NUMBER_WIDTH, y),
+                VerticalPosition::Top,
+                HorizontalAlignment::Right,
+                FontColor::Transparent(ACCENT_COLOR),
+                display,
+            )
+            .expect("word number render failed");
+
+        let color = if position == WORD_COUNT_TOTAL - 1 {
+            ACCENT_COLOR
+        } else {
+            TEXT_COLOR
+        };
+
+        HEADER_FONT
+            .render_aligned(
+                *word,
+                Point::new(left + WORDLIST_NUMBER_WIDTH + WORDLIST_NUMBER_GAP, y),
+                VerticalPosition::Top,
+                HorizontalAlignment::Left,
+                FontColor::Transparent(color),
+                display,
+            )
+            .expect("word render failed");
+    }
+
+    best_fit_font(&BODY_FONTS, DONE_TEXT, usable_width)
+        .render_aligned(
+            DONE_TEXT,
+            Point::new(center.x, bottom - 4),
             VerticalPosition::Bottom,
             HorizontalAlignment::Center,
             FontColor::Transparent(ACCENT_COLOR),
@@ -364,6 +517,7 @@ fn draw_word<D>(
     display: &mut D,
     word: &str,
     preview: Option<char>,
+    color: Rgb565,
     center: Point,
     usable_width: u32,
 ) where
@@ -390,7 +544,7 @@ fn draw_word<D>(
             word,
             pen,
             VerticalPosition::Center,
-            FontColor::Transparent(TEXT_COLOR),
+            FontColor::Transparent(color),
             display,
         )
         .expect("word render failed")
@@ -413,10 +567,21 @@ fn draw_word<D>(
 /// the letters either side of it — the ones `4` and `6` reach next — stay
 /// visible.
 ///
+/// Letters outside `reachable` are drawn dim: they spell nothing in the
+/// wordlist, and `4`/`6` skip straight past them. Keeping them in place rather
+/// than dropping them means the strip is the same 26 cells on every screen, so a
+/// letter is always where it was last time.
+///
 /// Rendered a glyph at a time rather than as a string because only that way is
 /// there a position to hang the marker under.
-fn draw_alphabet<D>(display: &mut D, cursor: usize, center_x: i32, center_y: i32, usable_width: u32)
-where
+fn draw_alphabet<D>(
+    display: &mut D,
+    cursor: Option<usize>,
+    reachable: LetterSet,
+    center_x: i32,
+    center_y: i32,
+    usable_width: u32,
+) where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
 {
@@ -430,8 +595,12 @@ where
     let mut pen = Point::new(center_x - width / 2, center_y);
 
     for (index, letter) in ALPHABET.iter().enumerate() {
-        let selected = index == cursor;
-        let color = if selected { ACCENT_COLOR } else { TEXT_COLOR };
+        let selected = cursor == Some(index);
+        let color = match (selected, reachable.contains(index)) {
+            (true, _) => ACCENT_COLOR,
+            (false, true) => TEXT_COLOR,
+            (false, false) => DIM_COLOR,
+        };
 
         let advance = font
             .render(

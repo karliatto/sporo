@@ -1,0 +1,61 @@
+# Device workspace: everything that is tied to a chip.
+#
+# Separate from the root workspace because `[build] target` and
+# `[unstable] build-std` in .cargo/config.toml are workspace-wide settings.
+[workspace]
+resolver = "2"
+
+[package]
+name = "spore-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# The chip-independent half: wordlist, mnemonic, and entry-screen state.
+spore-core = { path = "../crates/core" }
+
+# Bare-metal HAL. The `unstable` feature is needed for `esp_hal::delay::Delay`,
+# which both `mipidsi` and `embedded-hal-bus` require as a `DelayNs` source.
+esp-hal = { version = "~1.1.0", features = ["esp32", "unstable"] }
+
+# Emits the app descriptor the ESP-IDF second-stage bootloader expects.
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32"] }
+
+# `println!` over UART0, and a panic handler that prints a backtrace.
+esp-println = { version = "0.17.0", features = ["esp32"] }
+esp-backtrace = { version = "0.19.0", features = [
+	"esp32",
+	"panic-handler",
+	"println",
+] }
+
+# Display stack: ST7789 driver over SPI, drawn with embedded-graphics.
+mipidsi = "0.10.0"
+embedded-graphics = "0.8.2"
+embedded-hal-bus = "0.3.0"
+
+# Large bitmap faces for the home screen. embedded-graphics' own fonts stop at
+# 10x20, too small for a brand mark, and u8g2's renderer has the alignment
+# anchors the C++ screen code gets from TFT_eSPI's datums.
+u8g2-fonts = "0.8.0"
+
+# Fixed-capacity String, so we can format text without a heap allocator.
+heapless = "0.9.3"
+
+critical-section = "1.2.0"
+
+# The default debug profile is too slow and too large for a microcontroller,
+# so build with size optimisations even in dev.
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = "fat"
+opt-level = "s"
+
+# Rewrite build-machine paths to stable, content-addressed ones, so the firmware
+# does not depend on `$HOME`. This covers the debug info too, which is why
+# `debug = 2` above is free to keep.
+trim-paths = "all"

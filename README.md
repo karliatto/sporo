@@ -7,6 +7,15 @@ Bare-metal (`no_std`) Rust for Spore firmware runs on: an ESP32 driving an ST778
 The ESP32 is Xtensa, which upstream `rustc` does not target, so the toolchain
 comes from Espressif's fork:
 
+With Nix, the flake installs the pinned toolchain for you:
+
+```bash
+nix run .#install-esp-toolchain
+nix develop               # checks the versions on entry, sources export-esp.sh
+```
+
+Without Nix:
+
 ```bash
 cargo install espup espflash
 espup install \
@@ -25,8 +34,23 @@ bumping them.
 Inside the Nix dev shell (`nix develop`) the versions are checked on entry, and
 the shell refuses to start if they do not match.
 
-`build.rs` checks for the linker up front, so forgetting to source
-`export-esp.sh` gives you a one-line error instead of a wall of linker failures.
+[firmware/build.rs](firmware/build.rs) checks for the linker up front, so
+forgetting to source `export-esp.sh` gives you a one-line error instead of a wall
+of linker failures.
+
+## Layout
+
+Two workspaces, because Cargo applies the target and `build-std` from
+`.cargo/config.toml` across a whole workspace:
+
+| Path | Contents |
+| ---- | -------- |
+| [crates/core/](crates/core/) | Wordlist, mnemonic, and entry-screen state. No chip dependencies, so it builds and tests for the host. |
+| [firmware/](firmware/) | Everything tied to the ESP32: display, keypad, and the Xtensa build settings in [firmware/.cargo/config.toml](firmware/.cargo/config.toml). |
+
+The split is what lets `make test` run with no board, no espup environment, and
+no cross-compilation. Anything that decides what a phrase *means* belongs in
+`crates/core` for that reason.
 
 ## Build and flash
 
@@ -34,15 +58,18 @@ the shell refuses to start if they do not match.
 make build              # compile
 make flash              # compile, flash, and open the serial monitor
 make monitor            # serial monitor only
+make test               # host tests; needs neither a board nor espup
 make flash DEVICE=/dev/ttyUSB0
 ```
 
-Or drive cargo directly — `cargo run` flashes via the runner configured in
-[.cargo/config.toml](.cargo/config.toml):
+Or drive cargo directly. The device build has to run from `firmware/`, since
+Cargo finds `.cargo/config.toml` relative to the working directory rather than
+to the manifest:
 
 ```bash
+cd firmware
 cargo build --release
-cargo run --release
+cargo run --release   # flashes via the runner configured in .cargo/config.toml
 ```
 
 ## Reproducible builds
@@ -55,6 +82,9 @@ directories. Prove it:
 make check-reproducible   # builds twice from clean, compares the flashed .bin
 ```
 
+CI runs this on every push, in the same `nix develop` shell, as the `build-nix`
+job — so the claim is checked rather than assumed.
+
 The guarantee is scoped to `nix develop`. The toolchain still lives outside the
 Nix store — espup puts it in `~/.rustup` and `~/.espressif`, so `flake.lock`
 cannot pin it — which is why the shell asserts the versions instead. Building
@@ -66,11 +96,13 @@ image.
 Four places must move together, or the shell will refuse to start and CI will
 fail:
 
-1. `ESP_RUST_VERSION` / `ESP_GCC_VERSION` in [flake.nix](flake.nix)
+1. `espRustVersion` / `espGccVersion` in [flake.nix](flake.nix) — these feed both
+   the shell's assertion and `nix run .#install-esp-toolchain`
 2. `channel` in [rust-toolchain.toml](rust-toolchain.toml)
-3. `version` / `name` and the pin assertion in
-   [.github/workflows/ci.yml](.github/workflows/ci.yml)
-4. The `espup install` command above
+3. `version` / `name` and the pin assertion in the `build` job of
+   [.github/workflows/ci.yml](.github/workflows/ci.yml) (the `build-nix` job needs
+   no change — it reads the pins from the flake)
+4. The plain `espup install` command above, for non-Nix users
 
 Then re-run `espup install` with the new versions and `make check-reproducible`.
 

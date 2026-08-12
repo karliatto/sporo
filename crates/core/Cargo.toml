@@ -1,0 +1,15 @@
+[package]
+name = "spore-core"
+version = "0.1.0"
+edition = "2021"
+description = "Wordlist, mnemonic, and entry-screen state — no chip dependencies"
+publish = false
+
+[dependencies]
+# Fixed-capacity String and Vec, so words are held without a heap allocator.
+heapless = "0.9.3"
+
+# SHA-256 for the BIP-39 checksum. `default-features = false` drops std; it was
+# already in the tree as a dependency of esp-bootloader-esp-idf, so this costs
+# nothing in build time or flash beyond the one call site.
+sha2 = { version = "0.10", default-features = false }
