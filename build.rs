@@ -14,7 +14,11 @@ fn check_xtensa_linker_available() {
     let linker = std::env::var("CARGO_TARGET_XTENSA_ESP32_NONE_ELF_LINKER")
         .unwrap_or_else(|_| "xtensa-esp32-elf-gcc".to_string());
 
-    if std::process::Command::new(&linker).arg("--version").output().is_ok() {
+    if std::process::Command::new(&linker)
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
         return;
     }
 
