@@ -18,13 +18,32 @@ jobs:
       - uses: actions/checkout@v5
 
       # The ESP32 is Xtensa, so the toolchain comes from Espressif's fork.
-      # Installs the `esp` channel that rust-toolchain.toml selects and puts
-      # xtensa-esp32-elf-gcc on PATH, which build.rs checks for.
+      # Puts xtensa-esp32-elf-gcc on PATH, which build.rs checks for.
+      #
+      # `version` and `name` must match the pin in rust-toolchain.toml and the
+      # ESP_RUST_VERSION in flake.nix. The action defaults to version `latest`
+      # installed as `esp`, both of which would break us: `latest` drifts, so
+      # the firmware would stop being reproducible, and the bare `esp` name
+      # would not satisfy the override in rust-toolchain.toml.
       - name: Install Xtensa Rust toolchain
         uses: esp-rs/xtensa-toolchain@v1.7
         with:
+          version: 1.95.0.0
+          name: esp-1.95.0.0
           buildtargets: esp32 # skip esp32s2/esp32s3, we only build esp32
           ldproxy: false # only needed for std / esp-idf builds
+
+      # A wrong `name` above fails loudly on the next cargo call, but a wrong or
+      # ignored `version` would install `latest` under the pinned name and drift
+      # in silence. Same assertion the flake.nix shellHook makes locally.
+      - name: Verify toolchain pin
+        run: |
+          expected=1.95.0.0
+          actual=$(rustc --version)
+          case "$actual" in
+            *"($expected)"*) echo "toolchain pin ok: $actual" ;;
+            *) echo "::error::expected Xtensa Rust $expected, got: $actual"; exit 1 ;;
+          esac
 
       - uses: Swatinem/rust-cache@v2
 

@@ -63,11 +63,14 @@ image.
 
 ### Bumping the toolchain
 
-Three places must move together, or the shell will refuse to start:
+Four places must move together, or the shell will refuse to start and CI will
+fail:
 
 1. `ESP_RUST_VERSION` / `ESP_GCC_VERSION` in [flake.nix](flake.nix)
 2. `channel` in [rust-toolchain.toml](rust-toolchain.toml)
-3. The `espup install` command above
+3. `version` / `name` and the pin assertion in
+   [.github/workflows/ci.yml](.github/workflows/ci.yml)
+4. The `espup install` command above
 
 Then re-run `espup install` with the new versions and `make check-reproducible`.
 
