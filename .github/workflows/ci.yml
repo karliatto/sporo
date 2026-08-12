@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# A new push supersedes an in-flight run on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (xtensa-esp32-none-elf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The ESP32 is Xtensa, so the toolchain comes from Espressif's fork.
+      # Installs the `esp` channel that rust-toolchain.toml selects and puts
+      # xtensa-esp32-elf-gcc on PATH, which build.rs checks for.
+      - name: Install Xtensa Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.7
+        with:
+          buildtargets: esp32 # skip esp32s2/esp32s3, we only build esp32
+          ldproxy: false # only needed for std / esp-idf builds
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      # The build gate: a compile failure fails the job.
+      - name: Build
+        run: make build
+
+      - name: Clippy
+        run: cargo clippy --release -- -D warnings
