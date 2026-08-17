@@ -99,7 +99,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "spore-core"
+name = "sporo-core"
 version = "0.1.0"
 dependencies = [
  "heapless",

@@ -1,6 +1,6 @@
-# Spore-rs
+# Sporo
 
-Bare-metal (`no_std`) Rust for Spore firmware runs on: an ESP32 driving an ST7789 TFT.
+Bare-metal (`no_std`) Rust for Sporo firmware runs on: an ESP32 driving an ST7789 TFT.
 
 ## Prerequisites
 

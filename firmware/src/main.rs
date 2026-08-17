@@ -36,7 +36,7 @@ use u8g2_fonts::{
     Content, FontRenderer,
 };
 
-use spore_core::{
+use sporo_core::{
     bip39::{self, Mnemonic, WORD_COUNT_TOTAL},
     bip39_wordlist::LetterSet,
     word_entry::{WordEntry, ALPHABET, ALPHABET_TEXT, KEY_DELETE, MAX_WORD_LEN, WORD_COUNT},
@@ -58,7 +58,7 @@ const DISPLAY_OFFSET_Y: u16 = 40;
 /// Bytes of pixel data batched per SPI transfer. Bigger is faster, up to a point.
 const SPI_BUFFER_SIZE: usize = 512;
 
-const LOGO_TEXT: &str = "SPORE";
+const LOGO_TEXT: &str = "SPORO";
 const INSTRUCTION_TEXT: &str = "press any key";
 
 /// The keypad legend along the bottom of the word screen, and what replaces it
@@ -155,7 +155,7 @@ fn main() -> ! {
     let peripherals = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
     let mut delay = Delay::new();
 
-    println!("Spore starting");
+    println!("Sporo starting");
 
     // Keep the backlight off until the panel is initialised, so the user doesn't
     // see the ST7789's power-on garbage. Active high on this board.
@@ -338,9 +338,9 @@ where
         .expect("instruction render failed");
 }
 
-/// The screen reached from home by pressing a key: progress along the top, the
-/// word being spelled out across the middle, and the alphabet the cursor walks
-/// below it. Standing in for the recovery-phrase screen the real firmware has.
+/// Progress along the top, the word being spelled out across the middle, and 
+/// the alphabet the cursor walks below it. Standing in for the recovery-phrase
+/// screen the real firmware has.
 fn show_word_screen<D>(display: &mut D, entry: &WordEntry)
 where
     D: DrawTarget<Color = Rgb565>,

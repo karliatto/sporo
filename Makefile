@@ -27,7 +27,7 @@ PROFILE ?= release
 # --manifest-path.
 FIRMWARE := firmware
 
-ELF := $(FIRMWARE)/target/xtensa-esp32-none-elf/$(PROFILE)/spore-rs
+ELF := $(FIRMWARE)/target/xtensa-esp32-none-elf/$(PROFILE)/sporo
 
 # Pins the build timestamp in the ESP-IDF app descriptor, which is part of the
 # flashed image. Without this the descriptor records wall-clock time and no two
