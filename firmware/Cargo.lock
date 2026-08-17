@@ -1162,15 +1162,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0f368519fc6c85fc1afdb769fb5a51123f6158013e143656e25a3485a0d401c"
 
 [[package]]
-name = "spore-core"
-version = "0.1.0"
-dependencies = [
- "heapless 0.9.3",
- "sha2",
-]
-
-[[package]]
-name = "spore-rs"
+name = "sporo"
 version = "0.1.0"
 dependencies = [
  "critical-section",
@@ -1182,8 +1174,16 @@ dependencies = [
  "esp-println",
  "heapless 0.9.3",
  "mipidsi",
- "spore-core",
+ "sporo-core",
  "u8g2-fonts",
+]
+
+[[package]]
+name = "sporo-core"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.9.3",
+ "sha2",
 ]
 
 [[package]]

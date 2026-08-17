@@ -1,5 +1,5 @@
 {
-  description = "Spore - bare-metal Rust (no_std) firmware for ESP32";
+  description = "Sporo - bare-metal Rust (no_std) firmware for ESP32";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -73,17 +73,17 @@
             ESP_RUST_VERSION=${espRustVersion}
             ESP_GCC_VERSION=${espGccVersion}
 
-            spore_install_cmd() {
+            sporo_install_cmd() {
               echo "      nix run .#install-esp-toolchain"
             }
 
-            echo "Spore dev shell"
+            echo "Sporo dev shell"
 
             if [ ! -f "$HOME/export-esp.sh" ]; then
               echo ""
               echo "  The Xtensa toolchain is not installed yet. Run once:"
               echo ""
-              spore_install_cmd
+              sporo_install_cmd
               echo ""
               echo "  then re-enter this shell to pick up ~/export-esp.sh."
               echo "  It is a large download the first time."
@@ -94,41 +94,41 @@
 
             # rustc reports the espup version as a trailing "(1.95.0.0)", and the
             # GCC banner carries the crosstool-NG tag.
-            spore_rustc=$(rustc --version 2>/dev/null)
-            spore_gcc=$(xtensa-esp32-elf-gcc --version 2>/dev/null | head -1)
+            sporo_rustc=$(rustc --version 2>/dev/null)
+            sporo_gcc=$(xtensa-esp32-elf-gcc --version 2>/dev/null | head -1)
 
-            case "$spore_rustc" in
+            case "$sporo_rustc" in
               *"($ESP_RUST_VERSION)"*) ;;
               *)
                 echo ""
                 echo "  Xtensa Rust mismatch - builds here would not be reproducible."
                 echo "    expected: $ESP_RUST_VERSION"
-                echo "    found:    ''${spore_rustc:-none}"
+                echo "    found:    ''${sporo_rustc:-none}"
                 echo ""
                 echo "  Install the pinned toolchain:"
                 echo ""
-                spore_install_cmd
+                sporo_install_cmd
                 exit 1
                 ;;
             esac
 
-            case "$spore_gcc" in
+            case "$sporo_gcc" in
               *"$ESP_GCC_VERSION"*) ;;
               *)
                 echo ""
                 echo "  Xtensa GCC mismatch - builds here would not be reproducible."
                 echo "    expected: $ESP_GCC_VERSION"
-                echo "    found:    ''${spore_gcc:-none}"
+                echo "    found:    ''${sporo_gcc:-none}"
                 echo ""
                 echo "  Install the pinned toolchain:"
                 echo ""
-                spore_install_cmd
+                sporo_install_cmd
                 exit 1
                 ;;
             esac
 
-            echo "  $spore_rustc"
-            echo "  $spore_gcc"
+            echo "  $sporo_rustc"
+            echo "  $sporo_gcc"
             echo "  $(espflash --version 2>/dev/null)"
             echo "  make build | flash | monitor | check-reproducible"
           '';
