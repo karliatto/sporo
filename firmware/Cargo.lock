@@ -1172,10 +1172,9 @@ dependencies = [
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
- "heapless 0.9.3",
  "mipidsi",
  "sporo-core",
- "u8g2-fonts",
+ "sporo-ui",
 ]
 
 [[package]]
@@ -1184,6 +1183,16 @@ version = "0.1.0"
 dependencies = [
  "heapless 0.9.3",
  "sha2",
+]
+
+[[package]]
+name = "sporo-ui"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics",
+ "heapless 0.9.3",
+ "sporo-core",
+ "u8g2-fonts",
 ]
 
 [[package]]

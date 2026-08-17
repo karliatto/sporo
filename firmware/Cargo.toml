@@ -14,6 +14,10 @@ edition = "2021"
 # The chip-independent half: wordlist, mnemonic, and entry-screen state.
 sporo-core = { path = "../crates/core" }
 
+# The screens. Also chip-independent — it draws into any `DrawTarget`, which is
+# how its layout is tested on the host rather than on the panel.
+sporo-ui = { path = "../crates/ui" }
+
 # Bare-metal HAL. The `unstable` feature is needed for `esp_hal::delay::Delay`,
 # which both `mipidsi` and `embedded-hal-bus` require as a `DelayNs` source.
 esp-hal = { version = "~1.1.0", features = ["esp32", "unstable"] }
@@ -29,18 +33,12 @@ esp-backtrace = { version = "0.19.0", features = [
 	"println",
 ] }
 
-# Display stack: ST7789 driver over SPI, drawn with embedded-graphics.
+# Display stack: ST7789 driver over SPI. embedded-graphics is needed here only
+# to clear the panel on power-up and to report its size; everything drawn on top
+# of it lives in sporo-ui.
 mipidsi = "0.10.0"
 embedded-graphics = "0.8.2"
 embedded-hal-bus = "0.3.0"
-
-# Large bitmap faces for the home screen. embedded-graphics' own fonts stop at
-# 10x20, too small for a brand mark, and u8g2's renderer has the alignment
-# anchors the C++ screen code gets from TFT_eSPI's datums.
-u8g2-fonts = "0.8.0"
-
-# Fixed-capacity String, so we can format text without a heap allocator.
-heapless = "0.9.3"
 
 critical-section = "1.2.0"
 
