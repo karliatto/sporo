@@ -7,7 +7,7 @@ resolver = "2"
 
 [package]
 name = "sporo"
-version = "0.1.0"
+version = "0.0.1-beta.1"
 edition = "2021"
 
 [dependencies]

@@ -9,7 +9,10 @@ use sporo_core::{
     bip39_wordlist,
     word_entry::{WordEntry, ALPHABET, KEY_ACCEPT, KEY_ADD, KEY_NEXT, WORD_COUNT},
 };
-use sporo_ui::{show_home_screen, show_word_screen, show_wordlist_screen, BACKGROUND_COLOR};
+use sporo_ui::{
+    show_about_screen, show_home_screen, show_menu_screen, show_word_screen, show_wordlist_screen,
+    Menu, MenuItem, BACKGROUND_COLOR,
+};
 
 /// The panel the firmware drives: 135x240 rotated 90 degrees.
 const PANEL: Size = Size::new(240, 135);
@@ -200,6 +203,39 @@ fn the_alphabet_strip_fits_the_panel() {
     show_word_screen(&mut display, &entry);
 
     display.assert_within_panel("the alphabet strip on the last word");
+}
+
+/// Every entry is drawn in one face chosen from the longest label, so the
+/// cursor's position changes what is accented but not what is measured. Checked
+/// at each position anyway: the cursor is drawn from its own column, and it is
+/// the one thing that moves.
+#[test]
+fn the_menu_screen_fits_the_panel_at_every_cursor_position() {
+    let mut menu = Menu::new();
+
+    for item in MenuItem::ALL {
+        assert_eq!(menu.selected(), item);
+
+        let mut display = Recorder::new(PANEL);
+        show_menu_screen(&mut display, &menu);
+
+        display.assert_within_panel("the menu screen");
+
+        menu.handle_key(KEY_NEXT);
+    }
+}
+
+/// The about screen composes its lines at runtime, and the version is the one
+/// part not fixed at compile time — so it is measured with a longer one than
+/// the firmware carries today.
+#[test]
+fn the_about_screen_fits_the_panel() {
+    for version in ["0.1.0", "10.20.30-rc1"] {
+        let mut display = Recorder::new(PANEL);
+        show_about_screen(&mut display, version);
+
+        display.assert_within_panel("the about screen");
+    }
 }
 
 /// The tests above are only worth having if overflow is something [`Recorder`]

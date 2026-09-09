@@ -42,6 +42,8 @@ pub use crate::bip39_wordlist::MAX_WORD_LEN;
 
 pub type Word = String<MAX_WORD_LEN>;
 
+pub const KEY_UP: char = '2';
+pub const KEY_DOWN: char = '8';
 pub const KEY_PREV: char = '4';
 pub const KEY_NEXT: char = '6';
 pub const KEY_ADD: char = '5';

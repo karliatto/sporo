@@ -1163,7 +1163,7 @@ checksum = "a0f368519fc6c85fc1afdb769fb5a51123f6158013e143656e25a3485a0d401c"
 
 [[package]]
 name = "sporo"
-version = "0.1.0"
+version = "0.0.1-beta.1"
 dependencies = [
  "critical-section",
  "embedded-graphics",

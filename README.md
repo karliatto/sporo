@@ -46,6 +46,7 @@ Two workspaces, because Cargo applies the target and `build-std` from
 | Path | Contents |
 | ---- | -------- |
 | [crates/core/](crates/core/) | Wordlist, mnemonic, and entry-screen state. No chip dependencies, so it builds and tests for the host. |
+| [crates/ui/](crates/ui/) | The screens, drawn into any `DrawTarget`. Also chip-free, so `make test` checks that what they draw lands on the panel. |
 | [firmware/](firmware/) | Everything tied to the ESP32: display, keypad, and the Xtensa build settings in [firmware/.cargo/config.toml](firmware/.cargo/config.toml). |
 
 The split is what lets `make test` run with no board, no espup environment, and
