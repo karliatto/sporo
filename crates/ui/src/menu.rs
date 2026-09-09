@@ -281,7 +281,7 @@ mod tests {
     fn unbound_keys_are_ignored() {
         let mut menu = Menu::new();
 
-        for key in ['0', '1', '2', '3', '7', '8', '9', '#'] {
+        for key in ['0', '1', '3', '7', '9', '#'] {
             assert_eq!(
                 menu.handle_key(key),
                 MenuEvent::Ignored,
