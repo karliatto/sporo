@@ -30,7 +30,10 @@ use sporo_core::{
     bip39::{self, Mnemonic},
     word_entry::{WordEntry, KEY_DELETE},
 };
-use sporo_ui::{show_home_screen, show_word_screen, show_wordlist_screen, BACKGROUND_COLOR};
+use sporo_ui::{
+    show_about_screen, show_home_screen, show_menu_screen, show_word_screen, show_wordlist_screen,
+    Menu, MenuEvent, MenuItem, BACKGROUND_COLOR,
+};
 
 use crate::keypad::Keypad;
 
@@ -48,12 +51,18 @@ const DISPLAY_OFFSET_Y: u16 = 40;
 /// Bytes of pixel data batched per SPI transfer. Bigger is faster, up to a point.
 const SPI_BUFFER_SIZE: usize = 512;
 
+const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Which screen the keypad is currently talking to.
 enum Screen {
     Home,
+    /// Picking what the device should do.
+    Menu,
     Words,
     /// The finished phrase.
     Wordlist,
+    /// Firmware version and the shape of the phrase it builds.
+    About,
 }
 
 #[main]
@@ -136,6 +145,7 @@ fn main() -> ! {
     show_home_screen(&mut display);
 
     let mut entry = WordEntry::new();
+    let mut menu = Menu::new();
     let mut screen = Screen::Home;
     let mut button_was_down = false;
 
@@ -153,13 +163,48 @@ fn main() -> ! {
 
             match screen {
                 // Any key leaves the home screen, and only leaves it: swallowing
-                // the press keeps it from also nudging the cursor off A.
+                // the press keeps it from also nudging the menu cursor off the
+                // first entry.
                 Screen::Home => {
-                    screen = Screen::Words;
-                    show_word_screen(&mut display, &entry);
+                    screen = Screen::Menu;
+                    show_menu_screen(&mut display, &menu);
+                }
+                Screen::Menu => match menu.handle_key(key) {
+                    MenuEvent::Moved => show_menu_screen(&mut display, &menu),
+                    MenuEvent::Chose(MenuItem::GenerateMnemonic) => {
+                        screen = Screen::Words;
+                        show_word_screen(&mut display, &entry);
+                    }
+                    MenuEvent::Chose(MenuItem::About) => {
+                        screen = Screen::About;
+                        show_about_screen(&mut display, FIRMWARE_VERSION);
+                    }
+                    MenuEvent::Dismissed => {
+                        screen = Screen::Home;
+                        show_home_screen(&mut display);
+                    }
+                    MenuEvent::Ignored => {}
+                },
+                // Nothing to pick; `*` is the way back, as it is everywhere else.
+                Screen::About => {
+                    if key == KEY_DELETE {
+                        screen = Screen::Menu;
+                        show_menu_screen(&mut display, &menu);
+                    }
                 }
                 Screen::Words => {
-                    if entry.handle_key(key) {
+                    // Once, into a binding: the arm below branches on this and
+                    // asking twice would delete two letters for one press.
+                    let changed = entry.handle_key(key);
+
+                    // `*` that changed nothing is the entry state's only
+                    // unambiguous "backed out of the first word", and it is
+                    // otherwise inert. Route it to the menu, so leaving does not
+                    // need the board button, which wipes the phrase.
+                    if key == KEY_DELETE && !changed {
+                        screen = Screen::Menu;
+                        show_menu_screen(&mut display, &menu);
+                    } else if changed {
                         // The last word completes the phrase, so derive the
                         // twelfth here — once, on the transition — and move on.
                         if entry.is_complete() {
@@ -188,13 +233,17 @@ fn main() -> ! {
             }
         }
 
-        // `*` is a backspace on the word screen, so starting over is the one
-        // thing the keypad can't do; that's what the board button is for.
+        // `*` on the word screen deletes one letter at a time, so the keypad can
+        // only abandon a phrase by backing out of every word in it. The board
+        // button drops the lot in one press, from wherever the user is.
         // Trigger on the falling edge so holding it down doesn't repeat.
         let button_is_down = button.is_low();
         if button_is_down && !button_was_down {
             println!("button pressed: back to home");
             entry = WordEntry::new();
+            // The cursor goes back to the first entry too: this is the "start
+            // over" button, and resuming on whatever was last picked is not that.
+            menu = Menu::new();
             extra_entropy = None;
             screen = Screen::Home;
             show_home_screen(&mut display);
