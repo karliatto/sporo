@@ -7,7 +7,7 @@ use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use sporo_core::{
     bip39::{Mnemonic, WORD_COUNT_TOTAL},
     bip39_wordlist,
-    word_entry::{WordEntry, ALPHABET, KEY_ACCEPT, KEY_ADD, KEY_NEXT, WORD_COUNT},
+    word_entry::{WordEntry, ALPHABET, KEY_ACCEPT, KEY_ADD, KEY_DOWN, KEY_NEXT, WORD_COUNT},
 };
 use sporo_ui::{
     show_about_screen, show_home_screen, show_menu_screen, show_word_screen, show_wordlist_screen,
@@ -221,7 +221,7 @@ fn the_menu_screen_fits_the_panel_at_every_cursor_position() {
 
         display.assert_within_panel("the menu screen");
 
-        menu.handle_key(KEY_NEXT);
+        menu.handle_key(KEY_DOWN);
     }
 }
 
