@@ -15,12 +15,14 @@
 #![cfg_attr(not(test), no_std)]
 
 mod about;
+mod coin;
 mod home;
 mod menu;
 mod word;
 mod wordlist;
 
 pub use about::show_about_screen;
+pub use coin::show_coin_screen;
 pub use home::show_home_screen;
 pub use menu::{show_menu_screen, Menu, MenuEvent, MenuItem};
 pub use word::show_word_screen;

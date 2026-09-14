@@ -11,7 +11,6 @@ use esp_hal::{
     delay::Delay,
     gpio::{Input, InputConfig, Level, Output, OutputConfig, Pin as _, Pull},
     main,
-    rng::{Trng, TrngSource},
     spi::{
         master::{Config as SpiConfig, Spi},
         Mode,
@@ -28,11 +27,12 @@ use mipidsi::{
 
 use sporo_core::{
     bip39::{self, Mnemonic},
+    coin_entry::{CoinEntry, CoinEvent},
     word_entry::{WordEntry, KEY_DELETE},
 };
 use sporo_ui::{
-    show_about_screen, show_home_screen, show_menu_screen, show_word_screen, show_wordlist_screen,
-    Menu, MenuEvent, MenuItem, BACKGROUND_COLOR,
+    show_about_screen, show_coin_screen, show_home_screen, show_menu_screen, show_word_screen,
+    show_wordlist_screen, Menu, MenuEvent, MenuItem, BACKGROUND_COLOR,
 };
 
 use crate::keypad::Keypad;
@@ -59,6 +59,8 @@ enum Screen {
     /// Picking what the device should do.
     Menu,
     Words,
+    /// The coin flips that finish the phrase.
+    Coin,
     /// The finished phrase.
     Wordlist,
     /// Firmware version and the shape of the phrase it builds.
@@ -134,14 +136,6 @@ fn main() -> ! {
         ],
     );
 
-    // The ESP32's RNG only returns true random numbers while a physical noise
-    // source is feeding it — the RF subsystem, or the SAR ADC as used here.
-    // Without one it degrades to a PRNG, silently, which is the wrong way for a
-    // seed generator to fail. Holding `TrngSource` for the rest of `main` keeps
-    // the entropy source alive; dropping it would take the guarantee with it.
-    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
-    let trng = Trng::try_new().expect("TrngSource is alive for the rest of main");
-
     show_home_screen(&mut display);
 
     let mut entry = WordEntry::new();
@@ -149,11 +143,13 @@ fn main() -> ! {
     let mut screen = Screen::Home;
     let mut button_was_down = false;
 
-    // Drawn once per phrase rather than per completion. Going back with `*` to
-    // check a word and accepting it again would otherwise draw fresh bits and
-    // change the final word — after the user had written it down. The board
-    // button starts a new phrase, and takes this with it.
-    let mut extra_entropy: Option<u8> = None;
+    // Kept for the life of the phrase rather than per completion. Going back
+    // with `*` to check a word and accepting it again lands on the coin screen
+    // with the same seven flips still on it, so the final word does not change
+    // under a user who has already written it down — and, unlike the byte the
+    // chip's RNG used to supply, they can see for themselves that it did not.
+    // The board button starts a new phrase, and takes these with it.
+    let mut coins = CoinEntry::new();
 
     loop {
         // Redrawing is a full-screen blit, so it only ever happens on an event
@@ -205,23 +201,35 @@ fn main() -> ! {
                         screen = Screen::Menu;
                         show_menu_screen(&mut display, &menu);
                     } else if changed {
-                        // The last word completes the phrase, so derive the
-                        // twelfth here — once, on the transition — and move on.
+                        // The eleventh word is the last the keypad can spell.
+                        // The seven bits the twelfth carries come off the coin
+                        // screen, which opens here.
                         if entry.is_complete() {
-                            let extra = *extra_entropy.get_or_insert_with(|| {
-                                let mut byte = [0u8; 1];
-                                trng.read(&mut byte);
-                                byte[0]
-                            });
-
-                            let mnemonic = derive_mnemonic(&entry, extra);
-                            show_wordlist_screen(&mut display, &mnemonic);
-                            screen = Screen::Wordlist;
+                            screen = Screen::Coin;
+                            show_coin_screen(&mut display, &coins);
                         } else {
                             show_word_screen(&mut display, &entry);
                         }
                     }
                 }
+                Screen::Coin => match coins.handle_key(key) {
+                    CoinEvent::Changed => show_coin_screen(&mut display, &coins),
+                    CoinEvent::Confirmed => {
+                        let mnemonic = derive_mnemonic(&entry, &coins);
+                        show_wordlist_screen(&mut display, &mnemonic);
+                        screen = Screen::Wordlist;
+                    }
+                    // `*` past the last flip is the way back, and reopens the
+                    // last word — the same press, and the same effect, as `*`
+                    // on the wordlist screen. Landing on a word screen reading
+                    // 11/11 with no letter selectable would be a dead end.
+                    CoinEvent::Dismissed => {
+                        entry.handle_key(KEY_DELETE);
+                        screen = Screen::Words;
+                        show_word_screen(&mut display, &entry);
+                    }
+                    CoinEvent::Ignored => {}
+                },
                 // Nothing to pick here; `*` is the way back, reopening the last
                 // word for editing exactly as it does on the entry screen.
                 Screen::Wordlist => {
@@ -244,7 +252,7 @@ fn main() -> ! {
             // The cursor goes back to the first entry too: this is the "start
             // over" button, and resuming on whatever was last picked is not that.
             menu = Menu::new();
-            extra_entropy = None;
+            coins = CoinEntry::new();
             screen = Screen::Home;
             show_home_screen(&mut display);
         }
@@ -254,11 +262,16 @@ fn main() -> ! {
     }
 }
 
-/// Draws the fresh entropy the final word carries and completes the phrase.
+/// Completes the phrase from the entered words and the user's coin flips.
 ///
-/// Called once, on the transition into [`Screen::Wordlist`] — deriving on every
-/// redraw would change the last word each time the screen refreshed.
-fn derive_mnemonic(entry: &WordEntry, extra_entropy: u8) -> Mnemonic {
+/// Called on the transition into [`Screen::Wordlist`]. The flips are kept for
+/// the life of the phrase, so coming back here after checking a word derives the
+/// same twelfth word from the same seven bits.
+fn derive_mnemonic(entry: &WordEntry, coins: &CoinEntry) -> Mnemonic {
+    let extra_entropy = coins
+        .entropy()
+        .expect("the coin screen only confirms once every flip is in");
+
     let mnemonic = bip39::complete(entry.accepted(), extra_entropy)
         .expect("every accepted word was resolved against the wordlist");
 

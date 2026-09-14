@@ -9,4 +9,5 @@
 
 pub mod bip39;
 pub mod bip39_wordlist;
+pub mod coin_entry;
 pub mod word_entry;

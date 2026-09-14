@@ -17,10 +17,18 @@
 //!  |<------- entropy: 128 ----->| sum |
 //! ```
 //!
-//! Those 7 bits have to come from somewhere, which is what the TRNG is for in
-//! `main`: there are 2^7 = 128 equally valid twelfth words for any given eleven,
-//! and picking one by hand — or always taking the first — would throw that
-//! entropy away.
+//! Those 7 bits have to come from somewhere: there are 2^7 = 128 equally valid
+//! twelfth words for any given eleven, and picking one by hand — or always
+//! taking the first — would throw that entropy away.
+//!
+//! They come from the user, as seven coin flips entered on the keypad — see
+//! [`crate::coin_entry`]. The chip's hardware RNG could supply them instead, and
+//! did, but a seed generator whose randomness comes out of an opaque block on
+//! the die asks the user to trust the one thing this device exists not to trust.
+//!
+//! Note how far that reaches, though: these are 7 bits of the 128, and the other
+//! 121 are the eleven words the user chose. A phrase whose entropy is a coin's
+//! all the way down is a different thing — 128 flips, and every word derived.
 
 use sha2::{Digest, Sha256};
 
@@ -110,7 +118,8 @@ pub fn resolve(input: &str) -> Option<&'static str> {
 /// Completes a mnemonic from the entered words plus fresh entropy.
 ///
 /// Only the low [`FINAL_WORD_ENTROPY_BITS`] of `extra_entropy` are used; the
-/// rest are ignored, so the caller can pass a whole random byte.
+/// rest are ignored, so the caller can pass a whole byte without masking it
+/// first.
 ///
 /// Returns `None` unless exactly [`WORD_COUNT`] words were given and each one
 /// resolves — which the entry screen guarantees, since it resolves words before
@@ -172,7 +181,7 @@ mod tests {
 
     /// The 128-bit vectors from BIP-39 itself, split the way this module splits
     /// them: the first eleven words are entered, and the low 7 bits of the
-    /// entropy are what `main` would draw from the TRNG.
+    /// entropy are what the coin screen supplies.
     ///
     /// Getting this wrong yields phrases that look right and restore as a
     /// different wallet, or as none, so it is checked against the spec's own

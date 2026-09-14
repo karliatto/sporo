@@ -7,11 +7,15 @@ use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use sporo_core::{
     bip39::{Mnemonic, WORD_COUNT_TOTAL},
     bip39_wordlist,
-    word_entry::{WordEntry, ALPHABET, KEY_ACCEPT, KEY_ADD, KEY_DOWN, KEY_NEXT, WORD_COUNT},
+    coin_entry::{CoinEntry, FLIP_COUNT},
+    word_entry::{
+        WordEntry, ALPHABET, KEY_ACCEPT, KEY_ADD, KEY_DOWN, KEY_HEADS, KEY_NEXT, KEY_TAILS,
+        WORD_COUNT,
+    },
 };
 use sporo_ui::{
-    show_about_screen, show_home_screen, show_menu_screen, show_word_screen, show_wordlist_screen,
-    Menu, MenuItem, BACKGROUND_COLOR,
+    show_about_screen, show_coin_screen, show_home_screen, show_menu_screen, show_word_screen,
+    show_wordlist_screen, Menu, MenuItem, BACKGROUND_COLOR,
 };
 
 /// The panel the firmware drives: 135x240 rotated 90 degrees.
@@ -222,6 +226,28 @@ fn the_menu_screen_fits_the_panel_at_every_cursor_position() {
         display.assert_within_panel("the menu screen");
 
         menu.handle_key(KEY_DOWN);
+    }
+}
+
+/// The row is drawn from a fixed pitch, so it is the same width at every count;
+/// what changes is which cells carry a glyph. Checked empty and full because the
+/// header counter and the hint line both change with it, and the full row is the
+/// one where every cell is inked.
+#[test]
+fn a_coin_screen_fits_the_panel_at_every_count() {
+    let mut coins = CoinEntry::new();
+
+    for count in 0..=FLIP_COUNT {
+        assert_eq!(coins.count(), count);
+
+        let mut display = Recorder::new(PANEL);
+        show_coin_screen(&mut display, &coins);
+
+        display.assert_within_panel("the coin screen");
+
+        // Alternating, so both glyphs are measured: `H` and `T` need not be the
+        // same width in a proportional face.
+        coins.handle_key(if count % 2 == 0 { KEY_HEADS } else { KEY_TAILS });
     }
 }
 

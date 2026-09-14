@@ -45,13 +45,26 @@ Two workspaces, because Cargo applies the target and `build-std` from
 
 | Path | Contents |
 | ---- | -------- |
-| [crates/core/](crates/core/) | Wordlist, mnemonic, and entry-screen state. No chip dependencies, so it builds and tests for the host. |
+| [crates/core/](crates/core/) | Wordlist, mnemonic, entry-screen state, and the coin flips that finish a phrase. No chip dependencies, so it builds and tests for the host. |
 | [crates/ui/](crates/ui/) | The screens, drawn into any `DrawTarget`. Also chip-free, so `make test` checks that what they draw lands on the panel. |
 | [firmware/](firmware/) | Everything tied to the ESP32: display, keypad, and the Xtensa build settings in [firmware/.cargo/config.toml](firmware/.cargo/config.toml). |
 
 The split is what lets `make test` run with no board, no espup environment, and
 no cross-compilation. Anything that decides what a phrase *means* belongs in
 `crates/core` for that reason.
+
+## Where the entropy comes from
+
+Eleven words are typed; the twelfth is derived. Those eleven fix 121 of the
+phrase's 128 entropy bits, and the remaining seven come from the user — seven
+coin flips, entered on the keypad — not from the chip. The ESP32 has a hardware
+RNG and it would do the job, but a seed generator whose randomness comes out of
+an opaque block on the die asks you to trust the one thing a device like this
+exists not to trust.
+
+Note the scope of that claim: it is seven bits of 128. The other 121 are the
+eleven words *you* chose, and this device cannot tell whether you chose them
+well.
 
 ## Build and flash
 
