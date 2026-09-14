@@ -33,7 +33,8 @@ const BOX_PADDING: i32 = 6;
 /// What the menu can be asked to do.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuItem {
-    /// The word-entry flow: eleven words typed, the twelfth derived.
+    /// The word-entry flow: eleven words typed, seven coins flipped, the
+    /// twelfth derived from both.
     GenerateMnemonic,
     /// Firmware version and the shape of the phrase it builds.
     About,

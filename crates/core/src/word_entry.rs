@@ -47,6 +47,8 @@ pub const KEY_DOWN: char = '8';
 pub const KEY_PREV: char = '4';
 pub const KEY_NEXT: char = '6';
 pub const KEY_ADD: char = '5';
+pub const KEY_HEADS: char = '1';
+pub const KEY_TAILS: char = '0';
 pub const KEY_DELETE: char = '*';
 pub const KEY_ACCEPT: char = '#';
 
