@@ -6,20 +6,28 @@ use embedded_graphics::{
 use heapless::String;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
+use sporo_app::{action::Action, word_entry::WordEntry};
 use sporo_core::{
-    bip39_wordlist::LetterSet,
-    word_entry::{WordEntry, ALPHABET, ALPHABET_TEXT, MAX_WORD_LEN, WORD_COUNT},
+    bip39::WORD_COUNT,
+    bip39_wordlist::{LetterSet, ALPHABET, ALPHABET_TEXT, MAX_WORD_LEN},
 };
 
 use crate::{
-    best_fit_font, usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, DIM_COLOR,
-    HEADER_FONT, HORIZONTAL_MARGIN, LOGO_FONTS, TEXT_COLOR, WARNING_COLOR,
+    best_fit_font,
+    legend::{self, Hint},
+    usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, DIM_COLOR, HEADER_FONT,
+    HORIZONTAL_MARGIN, LOGO_FONTS, TEXT_COLOR, WARNING_COLOR,
 };
 
 /// The keypad legend along the bottom of the word screen.
-const HINT_TEXT: &str = "4/6 pick  5 add  * del  # next";
+pub(crate) const HINTS: [Hint; 4] = [
+    Hint::new(&[Action::Left, Action::Right], "pick"),
+    Hint::new(&[Action::Select], "add"),
+    Hint::new(&[Action::Back], "del"),
+    Hint::new(&[Action::Confirm], "next"),
+];
 
-/// Shown when `#` is pressed on a spelling several words share. Since a spelling
+/// Shown when `Confirm` is pressed on a spelling several words share. Since a spelling
 /// that matches nothing cannot be typed, that is the only way to get here, so
 /// the instruction is to carry on rather than to correct anything.
 const REJECT_TEXT: &str = "several words start so";
@@ -39,7 +47,7 @@ const CURSOR_BAR_HEIGHT: u32 = 2;
 /// Progress along the top, the word being spelled out across the middle, and
 /// the alphabet the cursor walks below it. Standing in for the recovery-phrase
 /// screen the real firmware has.
-pub fn show_word_screen<D>(display: &mut D, entry: &WordEntry)
+pub(crate) fn show_word_screen<D>(display: &mut D, entry: &WordEntry)
 where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
@@ -103,10 +111,11 @@ where
         usable_width,
     );
 
+    let legend = legend::compose(&HINTS);
     let (hint, hint_color) = if entry.rejected() {
         (REJECT_TEXT, WARNING_COLOR)
     } else {
-        (HINT_TEXT, ACCENT_COLOR)
+        (legend.as_str(), ACCENT_COLOR)
     };
 
     best_fit_font(&BODY_FONTS, hint, usable_width)

@@ -1,27 +1,18 @@
-//! Scanner for the 4x3 matrix keypad.
-//!
-//! Replaces the Arduino `Keypad` library the main firmware uses; there is no
-//! `no_std` equivalent, but a matrix scan is short enough to write directly
-//! against `esp_hal::gpio`. Pins and layout mirror the defaults in
-//! `../src/config.cpp` (`keypadRowPins`, `keypadColPins`, `keypadCharList`).
-
 use esp_hal::{
     delay::Delay,
     gpio::{AnyPin, Flex, Input, InputConfig, OutputConfig, Pull},
     time::{Duration, Instant},
 };
+use sporo_ui::keymap::LAYOUT;
 
-pub const ROWS: usize = 4;
-pub const COLS: usize = 3;
+pub const ROWS: usize = LAYOUT.len();
+pub const COLS: usize = LAYOUT[0].len();
 
-/// Row-major, left-to-right and top-to-bottom, which is how the Arduino library
-/// indexes its keymap and therefore how `keypadCharList` is written.
-const KEYMAP: [[char; COLS]; ROWS] = [
-    ['1', '2', '3'],
-    ['4', '5', '6'],
-    ['7', '8', '9'],
-    ['*', '0', '#'],
-];
+/// What is printed on each key. Row-major, left-to-right and top-to-bottom,
+/// which is how the Arduino library indexes its keymap and therefore how
+/// `keypadCharList` is written. Taken from the keymap rather than written out
+/// here, so the characters the scan reports are the ones the legends name.
+const KEYMAP: [[char; COLS]; ROWS] = LAYOUT;
 
 /// Matches `setDebounceTime(10)` in the library this replaces: it is both the
 /// debounce window and the minimum interval between hardware scans.

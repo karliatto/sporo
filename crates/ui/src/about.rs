@@ -1,23 +1,26 @@
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use heapless::String;
+use sporo_app::action::Action;
 use u8g2_fonts::{
     types::{FontColor, HorizontalAlignment, VerticalPosition},
     FontRenderer,
 };
 
 use crate::{
-    best_fit_font, usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, LOGO_FONTS,
-    TEXT_COLOR, WARNING_COLOR,
+    best_fit_font,
+    legend::{self, Hint},
+    usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, LOGO_FONTS, TEXT_COLOR,
+    WARNING_COLOR,
 };
 
 const LOGO_TEXT: &str = "SPORO";
-const HINT_TEXT: &str = "* back";
+/// The legend under the about text.
+pub(crate) const HINTS: [Hint; 1] = [Hint::new(&[Action::Back], "back")];
 
-const MESSAGE: [&str; 4] = [
+const MESSAGE: [&str; 3] = [
     "Bitcoin tools device.",
     "Do your own research and",
     "don't trust this device.",
-    "Your are the responsible",
 ];
 
 /// Distance from the top edge to the top of the brand mark, and from the bottom
@@ -32,7 +35,7 @@ const ROW_HEIGHT: i32 = 14;
 /// Enough for the longest line this screen composes, which is the firmware one.
 const MAX_LINE: usize = 32;
 
-pub fn show_about_screen<D>(display: &mut D, version: &str)
+pub(crate) fn show_about_screen<D>(display: &mut D, version: &str)
 where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
@@ -45,7 +48,8 @@ where
     let usable_width = usable_width(&bounds);
 
     let logo_font = best_fit_font(&LOGO_FONTS[LARGEST_LOGO..], LOGO_TEXT, usable_width);
-    let hint_font = best_fit_font(&BODY_FONTS, HINT_TEXT, usable_width);
+    let legend = legend::compose(&HINTS);
+    let hint_font = best_fit_font(&BODY_FONTS, legend.as_str(), usable_width);
 
     logo_font
         .render_aligned(
@@ -97,7 +101,7 @@ where
 
     hint_font
         .render_aligned(
-            HINT_TEXT,
+            legend.as_str(),
             Point::new(center.x, bottom - HINT_BOTTOM),
             VerticalPosition::Bottom,
             HorizontalAlignment::Center,
@@ -111,7 +115,7 @@ where
 /// `*` legend, which is the space the body has to share.
 fn block_center(bottom: i32, logo_font: &FontRenderer, hint_font: &FontRenderer) -> i32 {
     let top = LOGO_TOP + text_height(logo_font, LOGO_TEXT);
-    let floor = bottom - HINT_BOTTOM - text_height(hint_font, HINT_TEXT);
+    let floor = bottom - HINT_BOTTOM - text_height(hint_font, legend::compose(&HINTS).as_str());
 
     (top + floor) / 2
 }

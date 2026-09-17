@@ -1,4 +1,9 @@
-//! The screens, and the look they share.
+//! What the user sees and presses: the screens, the look they share, and the
+//! keymap that turns printed keys into actions.
+//!
+//! [`render`] draws whatever `sporo-app` says is showing; the screens behind it
+//! hold no state and decide nothing. [`keymap`] is the one place a key character
+//! means something, and every legend on the panel is composed from it.
 //!
 //! Kept apart from the firmware for the same reason [`sporo_core`] is: a screen
 //! is generic over its [`DrawTarget`](embedded_graphics::draw_target::DrawTarget)
@@ -17,19 +22,34 @@
 mod about;
 mod coin;
 mod home;
+pub mod keymap;
+mod legend;
 mod menu;
 mod word;
 mod wordlist;
 
-pub use about::show_about_screen;
-pub use coin::show_coin_screen;
-pub use home::show_home_screen;
-pub use menu::{show_menu_screen, Menu, MenuEvent, MenuItem};
-pub use word::show_word_screen;
-pub use wordlist::show_wordlist_screen;
-
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*, primitives::Rectangle};
+use sporo_app::view::View;
 use u8g2_fonts::{fonts, types::VerticalPosition, Content, FontRenderer};
+
+/// Draws `view` over the whole panel.
+///
+/// The only way in: the screens themselves are private, so whatever the
+/// application says is showing is what gets drawn, and nothing else can be.
+pub fn render<D>(display: &mut D, view: &View<'_>)
+where
+    D: DrawTarget<Color = Rgb565>,
+    D::Error: core::fmt::Debug,
+{
+    match *view {
+        View::Home => home::show_home_screen(display),
+        View::Menu { selected } => menu::show_menu_screen(display, selected),
+        View::About { version } => about::show_about_screen(display, version),
+        View::Words(words) => word::show_word_screen(display, words),
+        View::Coin(flips) => coin::show_coin_screen(display, flips),
+        View::Phrase(mnemonic) => wordlist::show_wordlist_screen(display, mnemonic),
+    }
+}
 
 /// Cleared to before anything is drawn, and what the firmware paints the panel
 /// with on power-up so the ST7789's garbage never reaches the user.
@@ -107,4 +127,142 @@ where
                 .is_some_and(|dimensions| dimensions.advance.x <= max_width as i32)
         })
         .unwrap_or_else(|| fonts.last().expect("font list is never empty"))
+}
+
+#[cfg(test)]
+mod tests {
+    use sporo_app::{action::Action, app::App};
+    use sporo_core::bip39::WORD_COUNT;
+
+    use super::*;
+    use crate::legend::{self, Hint};
+
+    /// The legend a view is drawn with. Home has none: it says "press any key",
+    /// which names no binding.
+    fn hints_for(view: &View<'_>) -> &'static [Hint] {
+        match *view {
+            View::Home => &[],
+            View::Menu { .. } => &menu::HINTS,
+            View::About { .. } => &about::HINTS,
+            View::Words(_) => &word::HINTS,
+            View::Coin(flips) => coin::hints(flips),
+            View::Phrase(_) => &wordlist::HINTS,
+        }
+    }
+
+    fn press(app: &mut App, action: Action) {
+        let _ = app.press(Some(action));
+    }
+
+    /// Types `letters` on the word screen, walking the cursor with `Right`.
+    fn spell(app: &mut App, letters: &str) {
+        for letter in letters.chars() {
+            for _ in 0..26 {
+                match app.view() {
+                    View::Words(words) if words.selected() == Some(letter) => break,
+                    View::Words(_) => press(app, Action::Right),
+                    _ => panic!("expected the word screen while spelling"),
+                }
+            }
+            press(app, Action::Select);
+        }
+    }
+
+    #[test]
+    fn a_legend_offers_exactly_the_keys_that_do_something() {
+        // A legend that names a key doing nothing sends the user hunting; one
+        // that leaves out a key that does something hides a feature. Checked
+        // against the application itself, by pressing every action on a copy of
+        // one sample state per screen — sample states, not every state, because
+        // some legends are legitimately inert in places (`# next` on an empty
+        // word, say).
+        let mut menu = App::new("0.0.0");
+        press(&mut menu, Action::Select);
+
+        let mut about = menu.clone();
+        press(&mut about, Action::Down);
+        press(&mut about, Action::Select);
+
+        let mut words = menu.clone();
+        press(&mut words, Action::Select);
+        // "AB" has six letters after it and several words, so every word-screen
+        // action does something: move, add, delete, and a refused accept.
+        spell(&mut words, "AB");
+
+        let mut coin = menu.clone();
+        press(&mut coin, Action::Select);
+        for _ in 0..WORD_COUNT {
+            spell(&mut coin, "ABANDON");
+            press(&mut coin, Action::Confirm);
+        }
+
+        let mut full = coin.clone();
+        for _ in 0..7 {
+            press(&mut full, Action::Heads);
+        }
+
+        let mut phrase = full.clone();
+        press(&mut phrase, Action::Confirm);
+
+        for (app, screen) in [
+            (menu, "menu"),
+            (about, "about"),
+            (words, "words"),
+            (coin, "coin, no flips"),
+            (full, "coin, every flip"),
+            (phrase, "phrase"),
+        ] {
+            let hints = hints_for(&app.view());
+
+            for action in Action::ALL {
+                let did_something = app.clone().press(Some(action));
+                let offered = hints.iter().any(|hint| hint.offers(action));
+
+                assert_eq!(
+                    did_something,
+                    offered,
+                    "on the {screen} screen, {action:?} {} but the legend {}",
+                    if did_something {
+                        "does something"
+                    } else {
+                        "does nothing"
+                    },
+                    if offered {
+                        "offers it"
+                    } else {
+                        "leaves it out"
+                    },
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_legends_read_as_they_did_when_typed_by_hand() {
+        // Composed from the keymap now, so a rebinding changes these on its own.
+        // Pinned anyway: the day one of them changes should be a deliberate
+        // edit here, reviewed as a change to what the panel says, not a side
+        // effect nobody looked at.
+        assert_eq!(
+            legend::compose(&crate::word::HINTS),
+            "4/6 pick  5 add  * del  # next"
+        );
+        assert_eq!(
+            legend::compose(&crate::menu::HINTS),
+            "2/8 move  5 select  * back"
+        );
+        assert_eq!(
+            legend::compose(&crate::coin::FLIPPING),
+            "1 heads  0 tails  * undo"
+        );
+        assert_eq!(
+            legend::compose(&crate::coin::READY),
+            "* undo a flip  # accept"
+        );
+        assert_eq!(
+            legend::compose(&crate::wordlist::HINTS),
+            "phrase complete  * to edit"
+        );
+        assert_eq!(legend::compose(&crate::about::HINTS), "* back");
+    }
 }

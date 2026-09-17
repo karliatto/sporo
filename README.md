@@ -45,13 +45,20 @@ Two workspaces, because Cargo applies the target and `build-std` from
 
 | Path | Contents |
 | ---- | -------- |
-| [crates/core/](crates/core/) | Wordlist, mnemonic, entry-screen state, and the coin flips that finish a phrase. No chip dependencies, so it builds and tests for the host. |
-| [crates/ui/](crates/ui/) | The screens, drawn into any `DrawTarget`. Also chip-free, so `make test` checks that what they draw lands on the panel. |
-| [firmware/](firmware/) | Everything tied to the ESP32: display, keypad, and the Xtensa build settings in [firmware/.cargo/config.toml](firmware/.cargo/config.toml). |
+| [crates/core/](crates/core/) | What a phrase *means*: the wordlist, the BIP-39 arithmetic, and how coin flips pack into the final word. No chip dependencies, so it builds and tests for the host. |
+| [crates/app/](crates/app/) | What a key *does*: the workflows (generate a phrase, about), the menu, and which screen comes next. Also chip-free, so whole workflows are walked through on the host rather than by pressing keys on the board. |
+| [crates/ui/](crates/ui/) | What the user *sees and presses*: the screens, drawn into any `DrawTarget`, and the keymap every legend is composed from. Also chip-free, so `make test` checks that what they draw lands on the panel. |
+| [firmware/](firmware/) | The board: display, keypad scan, button, and the Xtensa build settings in [firmware/.cargo/config.toml](firmware/.cargo/config.toml). It reads inputs, hands them to the app, and draws what comes back. |
 
-The split is what lets `make test` run with no board, no espup environment, and
-no cross-compilation. Anything that decides what a phrase *means* belongs in
-`crates/core` for that reason.
+Each crate depends only on the ones above it in that table, and the graph is what
+keeps the rules honest: `core` cannot name an action, `app` cannot name a key
+character, and `firmware` reaches the BIP-39 arithmetic only through `app`.
+
+- What a phrase *means* belongs in `crates/core`.
+- What a key *does* belongs in `crates/app`.
+- What the user *sees and presses* belongs in `crates/ui`.
+- Only `firmware/` needs the board — which is what lets `make test` run with no
+  board, no espup environment, and no cross-compilation.
 
 ## Where the entropy comes from
 

@@ -158,6 +158,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sporo-app"
+version = "0.1.0"
+dependencies = [
+ "heapless",
+ "sporo-core",
+]
+
+[[package]]
 name = "sporo-core"
 version = "0.1.0"
 dependencies = [
@@ -171,6 +179,7 @@ version = "0.1.0"
 dependencies = [
  "embedded-graphics",
  "heapless",
+ "sporo-app",
  "sporo-core",
  "u8g2-fonts",
 ]

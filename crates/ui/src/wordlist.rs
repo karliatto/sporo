@@ -1,14 +1,21 @@
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
+use sporo_app::action::Action;
 use sporo_core::bip39::{Mnemonic, WORD_COUNT_TOTAL};
 
 use crate::{
-    best_fit_font, usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, HEADER_FONT,
-    HORIZONTAL_MARGIN, TEXT_COLOR,
+    best_fit_font,
+    legend::{self, Hint},
+    usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, HEADER_FONT, HORIZONTAL_MARGIN,
+    TEXT_COLOR,
 };
 
-const DONE_TEXT: &str = "phrase complete  * to edit";
+/// The legend under the finished phrase.
+pub(crate) const HINTS: [Hint; 2] = [
+    Hint::note("phrase complete"),
+    Hint::new(&[Action::Back], "to edit"),
+];
 
 const WORDLIST_ROWS: usize = 6;
 const WORDLIST_COLUMNS: usize = WORD_COUNT_TOTAL / WORDLIST_ROWS;
@@ -23,7 +30,7 @@ const WORDLIST_HINT_SPACE: i32 = 16;
 // Three columns would silently overlap rather than fail to build.
 const _: () = assert!(WORDLIST_ROWS * WORDLIST_COLUMNS == WORD_COUNT_TOTAL);
 
-pub fn show_wordlist_screen<D>(display: &mut D, mnemonic: &Mnemonic)
+pub(crate) fn show_wordlist_screen<D>(display: &mut D, mnemonic: &Mnemonic)
 where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
@@ -78,9 +85,10 @@ where
             .expect("word render failed");
     }
 
-    best_fit_font(&BODY_FONTS, DONE_TEXT, usable_width)
+    let legend = legend::compose(&HINTS);
+    best_fit_font(&BODY_FONTS, legend.as_str(), usable_width)
         .render_aligned(
-            DONE_TEXT,
+            legend.as_str(),
             Point::new(center.x, bottom - 4),
             VerticalPosition::Bottom,
             HorizontalAlignment::Center,

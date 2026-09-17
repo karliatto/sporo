@@ -10,25 +10,35 @@ use u8g2_fonts::{
     FontRenderer,
 };
 
-use sporo_core::coin_entry::{CoinEntry, Flip, FLIP_COUNT};
+use sporo_app::action::Action;
+use sporo_core::flips::{Flip, Flips, FLIP_COUNT};
 
 use crate::{
-    best_fit_font, usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, DIM_COLOR,
-    HEADER_FONT, HORIZONTAL_MARGIN, LOGO_FONTS, TEXT_COLOR,
+    best_fit_font,
+    legend::{self, Hint},
+    usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, DIM_COLOR, HEADER_FONT,
+    HORIZONTAL_MARGIN, LOGO_FONTS, TEXT_COLOR,
 };
 
 /// Names the screen. It opens on its own the moment the last word is accepted,
 /// rather than being picked from the menu, so it has to say what it is.
 const TITLE_TEXT: &str = "coin flips";
 
-/// The keypad legend while flips are still coming in. `#` is deliberately
+/// The keypad legend while flips are still coming in. `Confirm` is deliberately
 /// absent: it does nothing until the last flip lands, and offering a key that is
 /// inert is worse than not offering it at all.
-const HINT_TEXT: &str = "1 heads  0 tails  * undo";
+pub(crate) const FLIPPING: [Hint; 3] = [
+    Hint::new(&[Action::Heads], "heads"),
+    Hint::new(&[Action::Tails], "tails"),
+    Hint::new(&[Action::Back], "undo"),
+];
 
 /// Replaces it once every flip is in — the cue, along with the row turning
-/// [`ACCENT_COLOR`], that `#` will now do something.
-const READY_TEXT: &str = "* undo a flip  # accept";
+/// [`ACCENT_COLOR`], that `Confirm` will now do something.
+pub(crate) const READY: [Hint; 2] = [
+    Hint::new(&[Action::Back], "undo a flip"),
+    Hint::new(&[Action::Confirm], "accept"),
+];
 
 /// Gap between the top edge and the progress line. The word screen's value, so
 /// the counter does not jump when that screen hands over to this one.
@@ -62,7 +72,7 @@ const SLOT_BAR_WIDTH: u32 = 20;
 /// The row is drawn left to right in the order the flips were entered, which is
 /// also most-significant bit first — so what is on the panel is the binary
 /// number the user could write down and check later.
-pub fn show_coin_screen<D>(display: &mut D, coins: &CoinEntry)
+pub(crate) fn show_coin_screen<D>(display: &mut D, flips: &Flips)
 where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
@@ -77,7 +87,7 @@ where
 
     HEADER_FONT
         .render_aligned(
-            format_args!("{}/{}", coins.count(), FLIP_COUNT),
+            format_args!("{}/{}", flips.count(), FLIP_COUNT),
             Point::new(HORIZONTAL_MARGIN as i32, HEADER_MARGIN),
             VerticalPosition::Top,
             HorizontalAlignment::Left,
@@ -97,17 +107,13 @@ where
         )
         .expect("title render failed");
 
-    draw_flips(display, coins, center.x, bottom - ROW_FROM_BOTTOM);
+    draw_flips(display, flips, center.x, bottom - ROW_FROM_BOTTOM);
 
-    let hint = if coins.is_complete() {
-        READY_TEXT
-    } else {
-        HINT_TEXT
-    };
+    let legend = legend::compose(hints(flips));
 
-    best_fit_font(&BODY_FONTS, hint, usable_width)
+    best_fit_font(&BODY_FONTS, legend.as_str(), usable_width)
         .render_aligned(
-            hint,
+            legend.as_str(),
             Point::new(center.x, bottom - 6),
             VerticalPosition::Bottom,
             HorizontalAlignment::Center,
@@ -117,13 +123,23 @@ where
         .expect("hint render failed");
 }
 
+/// The legend for `flips`: which keys do something depends on whether the row
+/// is full yet.
+pub(crate) fn hints(flips: &Flips) -> &'static [Hint] {
+    if flips.is_complete() {
+        &READY
+    } else {
+        &FLIPPING
+    }
+}
+
 /// Draws every slot at a fixed pitch, filled ones as a letter and the rest as
 /// bare underline.
 ///
 /// Cell by cell rather than as one string, the way `draw_alphabet` does it: each
 /// slot carries its own colour, and the underline needs a per-cell `x` to sit
 /// under.
-fn draw_flips<D>(display: &mut D, coins: &CoinEntry, center_x: i32, center_y: i32)
+fn draw_flips<D>(display: &mut D, flips: &Flips, center_x: i32, center_y: i32)
 where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
@@ -132,8 +148,8 @@ where
 
     // Once every flip is in, the whole row goes cyan — the same way the wordlist
     // screen picks out the word the user did not type. Paired with the legend
-    // swapping under it, that is what says `#` now does something.
-    let letter_color = if coins.is_complete() {
+    // swapping under it, that is what says `Confirm` now does something.
+    let letter_color = if flips.is_complete() {
         ACCENT_COLOR
     } else {
         TEXT_COLOR
@@ -145,7 +161,7 @@ where
     for index in 0..FLIP_COUNT {
         let x = first + index as i32 * SLOT_PITCH;
 
-        if let Some(flip) = coins.flip(index) {
+        if let Some(flip) = flips.flip(index) {
             let letter = match flip {
                 Flip::Heads => 'H',
                 Flip::Tails => 'T',
@@ -164,7 +180,7 @@ where
 
         // The bar under the slot the next flip lands in is the cursor, and needs
         // no state of its own: `count` is where the row has got to.
-        let bar_color = if index == coins.count() {
+        let bar_color = if index == flips.count() {
             ACCENT_COLOR
         } else {
             DIM_COLOR
@@ -257,8 +273,13 @@ mod tests {
         let bottom = PANEL.height as i32;
 
         let row_bottom = bottom - ROW_FROM_BOTTOM + SLOT_BAR_OFFSET + SLOT_BAR_HEIGHT as i32;
-        let hint_top =
-            bottom - 6 - text_height(best_fit_font(&BODY_FONTS, HINT_TEXT, usable), HINT_TEXT);
+        let legend = legend::compose(&FLIPPING);
+        let hint_top = bottom
+            - 6
+            - text_height(
+                best_fit_font(&BODY_FONTS, legend.as_str(), usable),
+                legend.as_str(),
+            );
 
         assert!(
             row_bottom <= hint_top,
@@ -285,13 +306,15 @@ mod tests {
         // chose different faces it would also change size, which reads as the
         // screen having jumped rather than as one word having changed.
         let usable = usable_width(&Rectangle::new(Point::zero(), PANEL));
+        let flipping = legend::compose(&FLIPPING);
+        let ready = legend::compose(&READY);
 
         assert!(
             core::ptr::eq(
-                best_fit_font(&BODY_FONTS, HINT_TEXT, usable),
-                best_fit_font(&BODY_FONTS, READY_TEXT, usable),
+                best_fit_font(&BODY_FONTS, flipping.as_str(), usable),
+                best_fit_font(&BODY_FONTS, ready.as_str(), usable),
             ),
-            "{HINT_TEXT:?} and {READY_TEXT:?} are set in different faces",
+            "{flipping:?} and {ready:?} are set in different faces",
         );
     }
 }

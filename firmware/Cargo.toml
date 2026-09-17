@@ -11,8 +11,9 @@ version = "0.0.1-beta.1"
 edition = "2021"
 
 [dependencies]
-# The chip-independent half: wordlist, mnemonic, and entry-screen state.
-sporo-core = { path = "../crates/core" }
+# What each key does and which screen comes next. The firmware reaches the
+# BIP-39 arithmetic only through this, so it cannot bypass a rule the app tests.
+sporo-app = { path = "../crates/app" }
 
 # The screens. Also chip-independent — it draws into any `DrawTarget`, which is
 # how its layout is tested on the host rather than on the panel.

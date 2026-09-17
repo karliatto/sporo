@@ -1173,8 +1173,16 @@ dependencies = [
  "esp-hal",
  "esp-println",
  "mipidsi",
- "sporo-core",
+ "sporo-app",
  "sporo-ui",
+]
+
+[[package]]
+name = "sporo-app"
+version = "0.1.0"
+dependencies = [
+ "heapless 0.9.3",
+ "sporo-core",
 ]
 
 [[package]]
@@ -1191,6 +1199,7 @@ version = "0.1.0"
 dependencies = [
  "embedded-graphics",
  "heapless 0.9.3",
+ "sporo-app",
  "sporo-core",
  "u8g2-fonts",
 ]

@@ -4,19 +4,13 @@ use core::convert::Infallible;
 
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 
+use sporo_app::{action::Action, menu::MenuItem, view::View, word_entry::WordEntry};
 use sporo_core::{
-    bip39::{Mnemonic, WORD_COUNT_TOTAL},
-    bip39_wordlist,
-    coin_entry::{CoinEntry, FLIP_COUNT},
-    word_entry::{
-        WordEntry, ALPHABET, KEY_ACCEPT, KEY_ADD, KEY_DOWN, KEY_HEADS, KEY_NEXT, KEY_TAILS,
-        WORD_COUNT,
-    },
+    bip39::{Mnemonic, WORD_COUNT, WORD_COUNT_TOTAL},
+    bip39_wordlist::{self, ALPHABET},
+    flips::{Flip, Flips, FLIP_COUNT},
 };
-use sporo_ui::{
-    show_about_screen, show_coin_screen, show_home_screen, show_menu_screen, show_word_screen,
-    show_wordlist_screen, Menu, MenuItem, BACKGROUND_COLOR,
-};
+use sporo_ui::{render, BACKGROUND_COLOR};
 
 /// The panel the firmware drives: 135x240 rotated 90 degrees.
 const PANEL: Size = Size::new(240, 135);
@@ -100,8 +94,8 @@ impl DrawTarget for Recorder {
     }
 }
 
-/// Spells `word` the way a user would — walking the cursor with `6` and
-/// confirming with `5` — since that is the only way in from outside the crate.
+/// Spells `word` the way a user would — walking the cursor with `Right` and
+/// adding with `Select` — since that is the only way in from outside the crate.
 fn spell(entry: &mut WordEntry, word: &str) {
     for letter in word.chars() {
         let target = ALPHABET
@@ -113,10 +107,10 @@ fn spell(entry: &mut WordEntry, word: &str) {
             if entry.cursor() == Some(target) {
                 break;
             }
-            entry.handle_key(KEY_NEXT);
+            entry.press(Action::Right);
         }
 
-        assert!(entry.handle_key(KEY_ADD), "{letter:?} was not added");
+        assert!(entry.press(Action::Select), "{letter:?} was not added");
     }
 }
 
@@ -129,7 +123,7 @@ fn longest_word() -> &'static str {
 #[test]
 fn the_home_screen_fits_the_panel() {
     let mut display = Recorder::new(PANEL);
-    show_home_screen(&mut display);
+    render(&mut display, &View::Home);
 
     display.assert_within_panel("the home screen");
 }
@@ -137,7 +131,7 @@ fn the_home_screen_fits_the_panel() {
 #[test]
 fn a_fresh_word_screen_fits_the_panel() {
     let mut display = Recorder::new(PANEL);
-    show_word_screen(&mut display, &WordEntry::new());
+    render(&mut display, &View::Words(&WordEntry::new()));
 
     display.assert_within_panel("an empty word screen");
 }
@@ -160,7 +154,7 @@ fn the_longest_word_plus_its_preview_fits_the_panel() {
     );
 
     let mut display = Recorder::new(PANEL);
-    show_word_screen(&mut display, &entry);
+    render(&mut display, &View::Words(&entry));
 
     display.assert_within_panel("the longest word with a preview");
 }
@@ -171,11 +165,11 @@ fn the_longest_word_plus_its_preview_fits_the_panel() {
 fn a_word_screen_carrying_the_longest_previous_word_fits_the_panel() {
     let mut entry = WordEntry::new();
     spell(&mut entry, longest_word());
-    assert!(entry.handle_key(KEY_ACCEPT));
+    assert!(entry.press(Action::Confirm));
     assert!(!entry.rejected(), "the longest word was refused");
 
     let mut display = Recorder::new(PANEL);
-    show_word_screen(&mut display, &entry);
+    render(&mut display, &View::Words(&entry));
 
     display.assert_within_panel("a word screen showing the previous word");
 }
@@ -186,7 +180,7 @@ fn the_wordlist_screen_fits_the_panel() {
     let mnemonic: Mnemonic = [longest; WORD_COUNT_TOTAL];
 
     let mut display = Recorder::new(PANEL);
-    show_wordlist_screen(&mut display, &mnemonic);
+    render(&mut display, &View::Phrase(&mnemonic));
 
     display.assert_within_panel("the wordlist screen");
 }
@@ -200,11 +194,11 @@ fn the_alphabet_strip_fits_the_panel() {
     let mut entry = WordEntry::new();
     for _ in 0..WORD_COUNT - 1 {
         spell(&mut entry, "abandon");
-        assert!(entry.handle_key(KEY_ACCEPT));
+        assert!(entry.press(Action::Confirm));
     }
 
     let mut display = Recorder::new(PANEL);
-    show_word_screen(&mut display, &entry);
+    render(&mut display, &View::Words(&entry));
 
     display.assert_within_panel("the alphabet strip on the last word");
 }
@@ -215,17 +209,11 @@ fn the_alphabet_strip_fits_the_panel() {
 /// the one thing that moves.
 #[test]
 fn the_menu_screen_fits_the_panel_at_every_cursor_position() {
-    let mut menu = Menu::new();
-
-    for item in MenuItem::ALL {
-        assert_eq!(menu.selected(), item);
-
+    for selected in MenuItem::ALL {
         let mut display = Recorder::new(PANEL);
-        show_menu_screen(&mut display, &menu);
+        render(&mut display, &View::Menu { selected });
 
         display.assert_within_panel("the menu screen");
-
-        menu.handle_key(KEY_DOWN);
     }
 }
 
@@ -235,19 +223,23 @@ fn the_menu_screen_fits_the_panel_at_every_cursor_position() {
 /// one where every cell is inked.
 #[test]
 fn a_coin_screen_fits_the_panel_at_every_count() {
-    let mut coins = CoinEntry::new();
+    let mut flips = Flips::new();
 
     for count in 0..=FLIP_COUNT {
-        assert_eq!(coins.count(), count);
+        assert_eq!(flips.count(), count);
 
         let mut display = Recorder::new(PANEL);
-        show_coin_screen(&mut display, &coins);
+        render(&mut display, &View::Coin(&flips));
 
         display.assert_within_panel("the coin screen");
 
         // Alternating, so both glyphs are measured: `H` and `T` need not be the
         // same width in a proportional face.
-        coins.handle_key(if count % 2 == 0 { KEY_HEADS } else { KEY_TAILS });
+        flips.record(if count % 2 == 0 {
+            Flip::Heads
+        } else {
+            Flip::Tails
+        });
     }
 }
 
@@ -258,7 +250,7 @@ fn a_coin_screen_fits_the_panel_at_every_count() {
 fn the_about_screen_fits_the_panel() {
     for version in ["0.1.0", "10.20.30-rc1"] {
         let mut display = Recorder::new(PANEL);
-        show_about_screen(&mut display, version);
+        render(&mut display, &View::About { version });
 
         display.assert_within_panel("the about screen");
     }
@@ -276,7 +268,7 @@ fn the_about_screen_fits_the_panel() {
 #[test]
 fn the_panel_check_catches_a_screen_that_does_not_fit() {
     let mut display = Recorder::new(Size::new(128, 64));
-    show_word_screen(&mut display, &WordEntry::new());
+    render(&mut display, &View::Words(&WordEntry::new()));
 
     assert!(
         !display.within_panel(),

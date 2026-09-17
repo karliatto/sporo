@@ -25,10 +25,20 @@ pub const COUNT: usize = 2048;
 
 /// Letters the list is written in: plain ASCII `a`-`z`.
 ///
-/// The entry screen's alphabet is the same letters in the same order, so a
-/// position in one is a position in the other and [`LetterSet`] can be indexed
-/// by either.
+/// [`ALPHABET`] is the same letters in the same order, so a position in one is a
+/// position in the other and [`LetterSet`] can be indexed by either.
 pub const LETTERS: usize = 26;
+
+/// The letters words are spelled from, upper-case and in list order.
+pub const ALPHABET_TEXT: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/// The same letters as bytes: they are all ASCII, so byte indexing is character
+/// indexing, which is what a position in [`LetterSet`] wants.
+pub const ALPHABET: &[u8] = ALPHABET_TEXT.as_bytes();
+
+// A [`LetterSet`] is indexed by position in the alphabet, and is built from the
+// wordlist's lower-case letters, so the two orders have to agree.
+const _: () = assert!(ALPHABET.len() == LETTERS);
 
 /// Length of the longest word, and so the capacity a buffer needs to hold any
 /// of them. Asserted against the asset below rather than trusted.

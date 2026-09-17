@@ -2,7 +2,7 @@
 name = "sporo-core"
 version = "0.1.0"
 edition = "2021"
-description = "Wordlist, mnemonic, and entry-screen state — no chip dependencies"
+description = "What a phrase means: wordlist, BIP-39 arithmetic, flip packing — no chip dependencies"
 publish = false
 
 [dependencies]

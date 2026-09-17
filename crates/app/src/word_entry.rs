@@ -3,55 +3,32 @@
 //! The keypad has no letter keys, so words are spelled out by walking a cursor
 //! along the alphabet and confirming one letter at a time:
 //!
-//! | Key | Action                                             |
-//! | --- | -------------------------------------------------- |
-//! | `4` | move the cursor to the previous usable letter       |
-//! | `6` | move the cursor to the next usable letter           |
-//! | `5` | append the selected letter to the current word      |
-//! | `*` | delete the last letter, or reopen the last word     |
-//! | `#` | accept the current word and start the next one      |
+//! | Action    | Effect                                             |
+//! | --------- | -------------------------------------------------- |
+//! | `Left`    | move the cursor to the previous usable letter      |
+//! | `Right`   | move the cursor to the next usable letter          |
+//! | `Select`  | append the selected letter to the current word     |
+//! | `Back`    | delete the last letter, or reopen the last word    |
+//! | `Confirm` | accept the current word and start the next one     |
 //!
-//! Only letters that still lead to a BIP-39 word are usable: `4` and `6` skip
-//! the rest and `5` will not add them, so a spelling that matches nothing cannot
-//! be typed in the first place. What `#` still has to reject is a prefix several
-//! words share — see [`WordEntry::rejected`].
+//! Only letters that still lead to a BIP-39 word are usable: `Left` and `Right`
+//! skip the rest and `Select` will not add them, so a spelling that matches
+//! nothing cannot be typed in the first place. What `Confirm` still has to
+//! reject is a prefix several words share — see [`WordEntry::rejected`].
 //!
 //! Pure state — no display or GPIO — so the screen code can render it and the
 //! main loop can drive it without either knowing about the other.
 
-use heapless::{String, Vec};
+use heapless::Vec;
 
-use crate::bip39_wordlist::{self, LetterSet};
+use sporo_core::{
+    bip39::{Word, WORD_COUNT},
+    bip39_wordlist::{self, LetterSet, ALPHABET},
+};
 
-/// Letters the cursor walks, in order.
-pub const ALPHABET_TEXT: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+use crate::action::Action;
 
-/// The same letters as bytes: they are all ASCII, so byte indexing is character
-/// indexing, which is what the cursor wants.
-pub const ALPHABET: &[u8] = ALPHABET_TEXT.as_bytes();
-
-// A [`LetterSet`] is indexed by position in the alphabet, and is built from the
-// wordlist's lower-case letters, so the two orders have to agree.
-const _: () = assert!(ALPHABET.len() == bip39_wordlist::LETTERS);
-
-/// Words in a phrase.
-pub const WORD_COUNT: usize = 11;
-
-/// The longest word that can be entered, which is the longest one in the list.
-pub use crate::bip39_wordlist::MAX_WORD_LEN;
-
-pub type Word = String<MAX_WORD_LEN>;
-
-pub const KEY_UP: char = '2';
-pub const KEY_DOWN: char = '8';
-pub const KEY_PREV: char = '4';
-pub const KEY_NEXT: char = '6';
-pub const KEY_ADD: char = '5';
-pub const KEY_HEADS: char = '1';
-pub const KEY_TAILS: char = '0';
-pub const KEY_DELETE: char = '*';
-pub const KEY_ACCEPT: char = '#';
-
+#[derive(Clone)]
 pub struct WordEntry {
     accepted: Vec<Word, WORD_COUNT>,
     current: Word,
@@ -72,7 +49,7 @@ impl WordEntry {
     pub fn new() -> Self {
         let mut entry = Self {
             accepted: Vec::new(),
-            current: String::new(),
+            current: Word::new(),
             cursor: 0,
             reachable: LetterSet::EMPTY,
             rejected: false,
@@ -82,7 +59,7 @@ impl WordEntry {
         entry
     }
 
-    /// The letter `5` would append, or `None` when there is none to offer: the
+    /// The letter `Select` would append, or `None` when there is none to offer: the
     /// current spelling is already as long as any word that starts with it, or
     /// the phrase is finished.
     pub fn selected(&self) -> Option<char> {
@@ -101,7 +78,7 @@ impl WordEntry {
         self.reachable
     }
 
-    /// Whether the last `#` was refused.
+    /// Whether the last `Confirm` was refused.
     ///
     /// Because unreachable letters cannot be typed, this only ever means the
     /// spelling so far is shared by several words — `AB`, say, which starts
@@ -133,19 +110,25 @@ impl WordEntry {
         self.accepted.len() == WORD_COUNT
     }
 
-    /// Applies a keypress. Returns whether anything changed, so the caller can
+    /// No letters typed and no words accepted: `Back` has nothing left to take
+    /// back, which is what lets a workflow tell "leave" apart from "delete".
+    pub fn is_empty(&self) -> bool {
+        self.accepted.is_empty() && self.current.is_empty()
+    }
+
+    /// Applies an action. Returns whether anything changed, so the caller can
     /// skip the (full-screen, and therefore slow) redraw when it hasn't —
-    /// pressing `5` against a dead-end letter, say.
-    pub fn handle_key(&mut self, key: char) -> bool {
+    /// `Select` against a dead-end letter, say.
+    pub fn press(&mut self, action: Action) -> bool {
         // Any press clears a standing rejection, so the message never outlives
         // the word it was about. Counts as a change even when the key does
         // nothing else, because the screen still has to repaint without it.
         let was_rejected = core::mem::take(&mut self.rejected);
 
-        let changed = match key {
-            KEY_PREV => self.move_cursor(LetterSet::prev_before),
-            KEY_NEXT => self.move_cursor(LetterSet::next_after),
-            KEY_ADD if self.reachable.contains(self.cursor) => {
+        let changed = match action {
+            Action::Left => self.move_cursor(LetterSet::prev_before),
+            Action::Right => self.move_cursor(LetterSet::next_after),
+            Action::Select if self.reachable.contains(self.cursor) => {
                 self.current
                     .push(ALPHABET[self.cursor] as char)
                     // A reachable letter is one some longer word continues with,
@@ -155,14 +138,14 @@ impl WordEntry {
 
                 true
             }
-            KEY_DELETE => self.delete(),
-            KEY_ACCEPT if !self.is_complete() && !self.current.is_empty() => {
+            Action::Back => self.delete(),
+            Action::Confirm if !self.is_complete() && !self.current.is_empty() => {
                 // Only real BIP-39 words can be accepted: the phrase is built by
                 // packing each word's index in the wordlist, so anything not in
                 // the list has no index to pack. A unique prefix is enough and
                 // is completed here, so the accepted word is always the whole
                 // one even when only four letters were typed.
-                let Some(word) = crate::bip39::resolve(&self.current) else {
+                let Some(word) = sporo_core::bip39::resolve(&self.current) else {
                     self.rejected = true;
 
                     return true;
@@ -191,8 +174,12 @@ impl WordEntry {
 
     /// Backspace that keeps going past the start of a word: with nothing left
     /// to delete it reopens the previous word, which is the only way to correct
-    /// one that has already been accepted.
-    fn delete(&mut self) -> bool {
+    /// one that has already been accepted. Returns whether there was anything
+    /// to take back.
+    ///
+    /// Public so a workflow can reopen the last word by name, rather than by
+    /// pretending the user pressed `Back`.
+    pub fn delete(&mut self) -> bool {
         if self.current.pop().is_none() {
             match self.accepted.pop() {
                 Some(word) => self.current = word,
@@ -243,11 +230,11 @@ impl WordEntry {
 mod tests {
     use super::*;
 
-    /// Walks the cursor onto `letter` with `6` presses and adds it, the way a
+    /// Walks the cursor onto `letter` with `Right` and adds it, the way a
     /// user would, rather than reaching into the state.
     ///
     /// Asserts the letter is reachable first: that is the property worth
-    /// holding, since an unreachable letter is one no amount of pressing `5`
+    /// holding, since an unreachable letter is one no amount of `Select`
     /// would ever add.
     fn add_letter(entry: &mut WordEntry, letter: char) {
         let target = ALPHABET
@@ -265,7 +252,7 @@ mod tests {
             if entry.cursor() == Some(target) {
                 break;
             }
-            entry.handle_key(KEY_NEXT);
+            entry.press(Action::Right);
         }
 
         assert_eq!(
@@ -273,7 +260,7 @@ mod tests {
             Some(target),
             "cursor never reached {letter:?}"
         );
-        assert!(entry.handle_key(KEY_ADD), "{letter:?} was not added");
+        assert!(entry.press(Action::Select), "{letter:?} was not added");
     }
 
     fn spell(entry: &mut WordEntry, word: &str) {
@@ -284,7 +271,7 @@ mod tests {
 
     fn enter(entry: &mut WordEntry, word: &str) {
         spell(entry, word);
-        assert!(entry.handle_key(KEY_ACCEPT));
+        assert!(entry.press(Action::Confirm));
         assert!(!entry.rejected(), "{word:?} was refused");
     }
 
@@ -324,12 +311,12 @@ mod tests {
 
         // "ab" continues only into a, i, l, o, s, u.
         assert_eq!(entry.cursor(), Some(0));
-        entry.handle_key(KEY_NEXT);
+        entry.press(Action::Right);
         assert_eq!(entry.selected(), Some('I'));
-        entry.handle_key(KEY_PREV);
+        entry.press(Action::Left);
         assert_eq!(entry.selected(), Some('A'));
         // Wrapping backwards from the first lands on the last, not on Z.
-        entry.handle_key(KEY_PREV);
+        entry.press(Action::Left);
         assert_eq!(entry.selected(), Some('U'));
     }
 
@@ -342,9 +329,9 @@ mod tests {
         assert_eq!(entry.reachable().count(), 1);
         assert_eq!(entry.selected(), Some('O'));
 
-        // The cursor cannot be moved off it, so `5` can only ever add O.
-        assert!(!entry.handle_key(KEY_NEXT));
-        assert!(!entry.handle_key(KEY_PREV));
+        // The cursor cannot be moved off it, so `Select` can only ever add O.
+        assert!(!entry.press(Action::Right));
+        assert!(!entry.press(Action::Left));
         assert_eq!(entry.selected(), Some('O'));
     }
 
@@ -356,9 +343,9 @@ mod tests {
         assert!(entry.reachable().is_empty());
         assert_eq!(entry.cursor(), None);
         assert_eq!(entry.selected(), None);
-        // With nothing to select, the cursor keys do nothing at all.
-        assert!(!entry.handle_key(KEY_NEXT));
-        assert!(!entry.handle_key(KEY_ADD));
+        // With nothing to select, the cursor actions do nothing at all.
+        assert!(!entry.press(Action::Right));
+        assert!(!entry.press(Action::Select));
     }
 
     #[test]
@@ -371,7 +358,7 @@ mod tests {
         assert_eq!(entry.selected(), Some('I'));
 
         // Accepting here takes the word, not one of its extensions.
-        assert!(entry.handle_key(KEY_ACCEPT));
+        assert!(entry.press(Action::Confirm));
         assert_eq!(entry.accepted(), ["ADD"]);
     }
 
@@ -380,7 +367,7 @@ mod tests {
         let mut entry = WordEntry::new();
         spell(&mut entry, "ab");
 
-        assert!(entry.handle_key(KEY_ACCEPT));
+        assert!(entry.press(Action::Confirm));
         assert!(entry.rejected());
         // Refusing costs the user nothing: the word is still there to finish.
         assert_eq!(entry.current(), "AB");
@@ -391,25 +378,25 @@ mod tests {
     fn the_next_keypress_clears_a_refusal() {
         let mut entry = WordEntry::new();
         spell(&mut entry, "ab");
-        entry.handle_key(KEY_ACCEPT);
+        entry.press(Action::Confirm);
         assert!(entry.rejected());
 
-        // Even a key that changes nothing else is a change, because the message
-        // has to come off the screen.
-        assert!(entry.handle_key('1'));
+        // Even an action that changes nothing else is a change, because the
+        // message has to come off the screen.
+        assert!(entry.press(Action::Heads));
         assert!(!entry.rejected());
-        assert!(!entry.handle_key('1'));
+        assert!(!entry.press(Action::Heads));
     }
 
     #[test]
     fn a_refused_word_can_be_finished_and_accepted() {
         let mut entry = WordEntry::new();
         spell(&mut entry, "ab");
-        entry.handle_key(KEY_ACCEPT);
+        entry.press(Action::Confirm);
 
         add_letter(&mut entry, 'l');
         assert!(!entry.rejected());
-        assert!(entry.handle_key(KEY_ACCEPT));
+        assert!(entry.press(Action::Confirm));
         assert_eq!(entry.accepted(), ["ABLE"]);
     }
 
@@ -418,7 +405,7 @@ mod tests {
         let mut entry = WordEntry::new();
         spell(&mut entry, "aband");
 
-        assert!(entry.handle_key(KEY_DELETE));
+        assert!(entry.press(Action::Back));
         assert_eq!(entry.current(), "ABAN");
         // The offered letters follow the word back.
         assert_eq!(entry.reachable().count(), 1);
@@ -431,17 +418,33 @@ mod tests {
         enter(&mut entry, "abandon");
         assert_eq!(entry.word_number(), 2);
 
-        assert!(entry.handle_key(KEY_DELETE));
+        assert!(entry.press(Action::Back));
         assert_eq!(entry.current(), "ABANDON");
         assert!(entry.accepted().is_empty());
         assert_eq!(entry.word_number(), 1);
     }
 
     #[test]
+    fn an_entry_is_empty_only_with_no_letters_and_no_words() {
+        let mut entry = WordEntry::new();
+        assert!(entry.is_empty());
+
+        add_letter(&mut entry, 'a');
+        assert!(!entry.is_empty());
+
+        // A word accepted and the next one not started is not empty either:
+        // `Back` would reopen that word.
+        entry.press(Action::Back);
+        enter(&mut entry, "abandon");
+        assert_eq!(entry.current(), "");
+        assert!(!entry.is_empty());
+    }
+
+    #[test]
     fn delete_at_the_very_start_does_nothing() {
         let mut entry = WordEntry::new();
 
-        assert!(!entry.handle_key(KEY_DELETE));
+        assert!(!entry.press(Action::Back));
         assert_eq!(entry.current(), "");
     }
 
@@ -456,14 +459,14 @@ mod tests {
         assert_eq!(entry.accepted().len(), WORD_COUNT);
         assert_eq!(entry.word_number(), WORD_COUNT);
 
-        // Nothing is on offer, so no key can grow the phrase past its length.
+        // Nothing is on offer, so no action can grow the phrase past its length.
         assert!(entry.reachable().is_empty());
-        assert!(!entry.handle_key(KEY_ADD));
-        assert!(!entry.handle_key(KEY_ACCEPT));
+        assert!(!entry.press(Action::Select));
+        assert!(!entry.press(Action::Confirm));
         assert_eq!(entry.accepted().len(), WORD_COUNT);
 
-        // `*` is the way back in, and reopens the last word.
-        assert!(entry.handle_key(KEY_DELETE));
+        // `Back` is the way back in, and reopens the last word.
+        assert!(entry.press(Action::Back));
         assert!(!entry.is_complete());
         assert_eq!(entry.current(), "ABANDON");
     }
@@ -477,8 +480,7 @@ mod tests {
             let mut entry = WordEntry::new();
             enter(&mut entry, word);
 
-            let expected: heapless::String<MAX_WORD_LEN> =
-                word.chars().map(|c| c.to_ascii_uppercase()).collect();
+            let expected: Word = word.chars().map(|c| c.to_ascii_uppercase()).collect();
             assert_eq!(entry.accepted(), [expected]);
         }
     }

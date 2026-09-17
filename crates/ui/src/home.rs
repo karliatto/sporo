@@ -10,7 +10,7 @@ const INSTRUCTION_TEXT: &str = "press any key";
 
 /// The idle screen: brand mark just above centre, instruction pinned to the
 /// bottom edge. Modelled on `showHomeScreen` in `../src/screen/tft.cpp`.
-pub fn show_home_screen<D>(display: &mut D)
+pub(crate) fn show_home_screen<D>(display: &mut D)
 where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
