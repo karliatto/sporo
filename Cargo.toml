@@ -7,7 +7,7 @@
 # too, which is exactly what the split exists to avoid.
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/ui"]
+members = ["crates/core", "crates/app", "crates/ui"]
 
 [profile.release]
 opt-level = "s"

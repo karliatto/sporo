@@ -22,7 +22,7 @@
 //! taking the first — would throw that entropy away.
 //!
 //! They come from the user, as seven coin flips entered on the keypad — see
-//! [`crate::coin_entry`]. The chip's hardware RNG could supply them instead, and
+//! [`crate::flips`]. The chip's hardware RNG could supply them instead, and
 //! did, but a seed generator whose randomness comes out of an opaque block on
 //! the die asks the user to trust the one thing this device exists not to trust.
 //!
@@ -30,12 +30,18 @@
 //! 121 are the eleven words the user chose. A phrase whose entropy is a coin's
 //! all the way down is a different thing — 128 flips, and every word derived.
 
+use heapless::String;
 use sha2::{Digest, Sha256};
 
-use crate::{
-    bip39_wordlist,
-    word_entry::{Word, WORD_COUNT},
-};
+use crate::bip39_wordlist::{self, MAX_WORD_LEN};
+
+/// Words the user supplies. The mnemonic's last word is derived from these
+/// rather than entered.
+pub const WORD_COUNT: usize = 11;
+
+/// One entered word, as [`complete`] receives it. Any case is accepted; the
+/// entry screen happens to store upper-case.
+pub type Word = String<MAX_WORD_LEN>;
 
 /// Bits each word contributes: the wordlist has 2^11 entries.
 const BITS_PER_WORD: usize = 11;
@@ -258,6 +264,30 @@ mod tests {
                 !seen[..index].contains(word),
                 "{word:?} produced by two different extras"
             );
+        }
+    }
+
+    #[test]
+    fn the_flips_complete_the_bip39_reference_vectors() {
+        use crate::flips::{Flip, Flips, FLIP_COUNT};
+
+        // Both entropy values the vectors use are bit-palindromes, so they say
+        // nothing about the order flips are packed in — that is
+        // `flips::tests::the_first_flip_is_the_most_significant_bit`'s job.
+        // What this checks is the seam: that what `Flips` hands `complete` is
+        // what the spec's own vectors expect to receive.
+        for (phrase, extra, expected) in [VECTORS[0], VECTORS[1]] {
+            let flip = if extra == 0 { Flip::Tails } else { Flip::Heads };
+            let mut flips = Flips::new();
+            for _ in 0..FLIP_COUNT {
+                flips.record(flip);
+            }
+
+            let entropy = flips.entropy().expect("every flip was recorded");
+            let mnemonic =
+                complete(&entered(phrase), entropy).expect("vector words are in the list");
+
+            assert_eq!(mnemonic[WORD_COUNT], expected, "for {phrase:?}");
         }
     }
 
