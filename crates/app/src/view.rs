@@ -4,6 +4,15 @@ use sporo_core::{bip39::Mnemonic, flips::Flips};
 
 use crate::{menu::MenuItem, word_entry::WordEntry};
 
+/// Words of a finished phrase shown at once. A 12-word phrase is one page; a
+/// 24-word one is two, turned with `Left` and `Right`.
+pub const PHRASE_PAGE_SIZE: usize = 12;
+
+/// Pages `mnemonic` takes at [`PHRASE_PAGE_SIZE`] words apiece.
+pub fn phrase_pages(mnemonic: &Mnemonic) -> usize {
+    mnemonic.words().len().div_ceil(PHRASE_PAGE_SIZE)
+}
+
 /// One screen's worth of state, borrowed from the [`crate::app::App`] that owns
 /// it. The screens draw from this and nothing else.
 ///
@@ -16,9 +25,17 @@ use crate::{menu::MenuItem, word_entry::WordEntry};
 #[derive(Clone, Copy)]
 pub enum View<'a> {
     Home,
-    Menu { selected: MenuItem },
-    About { version: &'static str },
+    Menu {
+        selected: MenuItem,
+    },
+    About {
+        version: &'static str,
+    },
     Words(&'a WordEntry),
     Coin(&'a Flips),
-    Phrase(&'a Mnemonic),
+    /// `page` counts from 0, and is always below [`phrase_pages`].
+    Phrase {
+        mnemonic: &'a Mnemonic,
+        page: usize,
+    },
 }

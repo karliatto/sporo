@@ -7,10 +7,7 @@ use heapless::String;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 use sporo_app::{action::Action, word_entry::WordEntry};
-use sporo_core::{
-    bip39::WORD_COUNT,
-    bip39_wordlist::{LetterSet, ALPHABET, ALPHABET_TEXT, MAX_WORD_LEN},
-};
+use sporo_core::bip39_wordlist::{LetterSet, ALPHABET, ALPHABET_TEXT, MAX_WORD_LEN};
 
 use crate::{
     best_fit_font,
@@ -62,7 +59,7 @@ where
 
     HEADER_FONT
         .render_aligned(
-            format_args!("{}/{}", entry.word_number(), WORD_COUNT),
+            format_args!("{}/{}", entry.word_number(), entry.word_count()),
             Point::new(HORIZONTAL_MARGIN as i32, HEADER_MARGIN),
             VerticalPosition::Top,
             HorizontalAlignment::Left,

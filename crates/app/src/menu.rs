@@ -3,21 +3,29 @@
 //! State only: which entry the cursor is on, and what an action does to it.
 //! What each entry is *called* on the panel is the screen's business.
 
+use sporo_core::bip39::SeedLength;
+
 use crate::action::Action;
 
 /// What the menu can be asked to do.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MenuItem {
-    /// The word-entry flow: eleven words typed, seven coins flipped, the
-    /// twelfth derived from both.
-    GenerateMnemonic,
+    /// The word-entry flow for a phrase of the given length: every word but the
+    /// last typed, a coin flipped per bit the last word carries, and the last
+    /// word derived from both — eleven words and seven flips for 12, twenty-three
+    /// and three for 24.
+    GenerateMnemonic(SeedLength),
     /// Firmware version and the shape of the phrase it builds.
     About,
 }
 
 impl MenuItem {
     /// Every entry, in the order they are drawn and walked.
-    pub const ALL: [Self; 2] = [Self::GenerateMnemonic, Self::About];
+    pub const ALL: [Self; 3] = [
+        Self::GenerateMnemonic(SeedLength::Words12),
+        Self::GenerateMnemonic(SeedLength::Words24),
+        Self::About,
+    ];
 }
 
 /// What an action did, for the caller to act on.
@@ -88,7 +96,7 @@ mod tests {
 
     #[test]
     fn a_new_menu_starts_on_the_first_entry() {
-        assert_eq!(Menu::new().selected(), MenuItem::GenerateMnemonic);
+        assert_eq!(Menu::new().selected(), MenuItem::ALL[0]);
     }
 
     #[test]
@@ -96,11 +104,19 @@ mod tests {
         let mut menu = Menu::new();
 
         assert_eq!(menu.press(Action::Down), MenuEvent::Moved);
+        assert_eq!(
+            menu.selected(),
+            MenuItem::GenerateMnemonic(SeedLength::Words24)
+        );
+        menu.press(Action::Down);
         assert_eq!(menu.selected(), MenuItem::About);
 
         // Past the last entry is the first again, not a dead end.
         assert_eq!(menu.press(Action::Down), MenuEvent::Moved);
-        assert_eq!(menu.selected(), MenuItem::GenerateMnemonic);
+        assert_eq!(
+            menu.selected(),
+            MenuItem::GenerateMnemonic(SeedLength::Words12)
+        );
     }
 
     #[test]
@@ -114,16 +130,10 @@ mod tests {
     #[test]
     fn select_reports_the_entry_under_the_cursor() {
         let mut menu = Menu::new();
-        assert_eq!(
-            menu.press(Action::Select),
-            MenuEvent::Chose(MenuItem::GenerateMnemonic),
-        );
-
-        menu.press(Action::Down);
-        assert_eq!(
-            menu.press(Action::Select),
-            MenuEvent::Chose(MenuItem::About),
-        );
+        for item in MenuItem::ALL {
+            assert_eq!(menu.press(Action::Select), MenuEvent::Chose(item));
+            menu.press(Action::Down);
+        }
     }
 
     /// Choosing does not move the cursor: coming back from a screen should land
@@ -131,7 +141,7 @@ mod tests {
     #[test]
     fn choosing_leaves_the_cursor_where_it_was() {
         let mut menu = Menu::new();
-        menu.press(Action::Down);
+        menu.press(Action::Up);
         menu.press(Action::Select);
 
         assert_eq!(menu.selected(), MenuItem::About);
@@ -161,7 +171,7 @@ mod tests {
             );
         }
 
-        assert_eq!(menu.selected(), MenuItem::GenerateMnemonic);
+        assert_eq!(menu.selected(), MenuItem::ALL[0]);
     }
 
     /// The cursor is walked over `MenuItem::ALL`'s length, so the two must agree.

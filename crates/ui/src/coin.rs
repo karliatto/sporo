@@ -11,7 +11,7 @@ use u8g2_fonts::{
 };
 
 use sporo_app::action::Action;
-use sporo_core::flips::{Flip, Flips, FLIP_COUNT};
+use sporo_core::flips::{Flip, Flips};
 
 use crate::{
     best_fit_font,
@@ -87,7 +87,7 @@ where
 
     HEADER_FONT
         .render_aligned(
-            format_args!("{}/{}", flips.count(), FLIP_COUNT),
+            format_args!("{}/{}", flips.count(), flips.required()),
             Point::new(HORIZONTAL_MARGIN as i32, HEADER_MARGIN),
             VerticalPosition::Top,
             HorizontalAlignment::Left,
@@ -155,10 +155,11 @@ where
         TEXT_COLOR
     };
 
-    let width = SLOT_PITCH * FLIP_COUNT as i32;
+    let slots = flips.required();
+    let width = SLOT_PITCH * slots as i32;
     let first = center_x - width / 2 + SLOT_PITCH / 2;
 
-    for index in 0..FLIP_COUNT {
+    for index in 0..slots {
         let x = first + index as i32 * SLOT_PITCH;
 
         if let Some(flip) = flips.flip(index) {
@@ -207,6 +208,7 @@ mod tests {
     use super::*;
 
     use embedded_graphics::primitives::Rectangle;
+    use sporo_core::flips::MAX_FLIP_COUNT;
 
     /// The panel this row is laid out for.
     const PANEL: Size = Size::new(240, 135);
@@ -223,11 +225,11 @@ mod tests {
     #[test]
     fn the_flip_row_fits_the_panel_width() {
         let usable = usable_width(&Rectangle::new(Point::zero(), PANEL));
-        let width = SLOT_PITCH * FLIP_COUNT as i32;
+        let width = SLOT_PITCH * MAX_FLIP_COUNT as i32;
 
         assert!(
             width <= usable as i32,
-            "{FLIP_COUNT} slots at a {SLOT_PITCH}px pitch run to {width}px, \
+            "{MAX_FLIP_COUNT} slots at a {SLOT_PITCH}px pitch run to {width}px, \
              past the {usable}px between the margins",
         );
     }

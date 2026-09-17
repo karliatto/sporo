@@ -22,7 +22,7 @@
 use heapless::Vec;
 
 use sporo_core::{
-    bip39::{Word, WORD_COUNT},
+    bip39::{SeedLength, Word, MAX_WORD_COUNT},
     bip39_wordlist::{self, LetterSet, ALPHABET},
 };
 
@@ -30,7 +30,9 @@ use crate::action::Action;
 
 #[derive(Clone)]
 pub struct WordEntry {
-    accepted: Vec<Word, WORD_COUNT>,
+    accepted: Vec<Word, MAX_WORD_COUNT>,
+    /// Decides how many words make the phrase complete.
+    length: SeedLength,
     current: Word,
     cursor: usize,
     /// Letters that extend [`Self::current`] towards a real word. Derived from
@@ -39,16 +41,11 @@ pub struct WordEntry {
     rejected: bool,
 }
 
-impl Default for WordEntry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl WordEntry {
-    pub fn new() -> Self {
+    pub fn new(length: SeedLength) -> Self {
         let mut entry = Self {
             accepted: Vec::new(),
+            length,
             current: Word::new(),
             cursor: 0,
             reachable: LetterSet::EMPTY,
@@ -101,13 +98,20 @@ impl WordEntry {
     }
 
     /// 1-based number of the word being entered, for display. Stays at
-    /// [`WORD_COUNT`] once the phrase is complete rather than running past it.
+    /// [`Self::word_count`] once the phrase is complete rather than running
+    /// past it.
     pub fn word_number(&self) -> usize {
-        (self.accepted.len() + 1).min(WORD_COUNT)
+        (self.accepted.len() + 1).min(self.word_count())
+    }
+
+    /// Words to be entered in all: every word of the phrase but the derived
+    /// last one.
+    pub fn word_count(&self) -> usize {
+        self.length.entered_words()
     }
 
     pub fn is_complete(&self) -> bool {
-        self.accepted.len() == WORD_COUNT
+        self.accepted.len() == self.word_count()
     }
 
     /// No letters typed and no words accepted: `Back` has nothing left to take
@@ -161,7 +165,7 @@ impl WordEntry {
                 self.current.clear();
                 self.accepted
                     .push(accepted)
-                    .expect("checked against WORD_COUNT above");
+                    .expect("checked against the word count above");
                 self.refresh();
 
                 true
@@ -277,7 +281,7 @@ mod tests {
 
     #[test]
     fn a_new_entry_starts_on_a_with_every_initial_offered() {
-        let entry = WordEntry::new();
+        let entry = WordEntry::new(SeedLength::Words12);
 
         assert_eq!(entry.current(), "");
         assert_eq!(entry.cursor(), Some(0));
@@ -288,7 +292,7 @@ mod tests {
 
     #[test]
     fn a_word_is_stored_in_upper_case() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         enter(&mut entry, "abandon");
 
         assert_eq!(entry.accepted(), ["ABANDON"]);
@@ -298,7 +302,7 @@ mod tests {
 
     #[test]
     fn a_unique_prefix_is_completed_on_accept() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         enter(&mut entry, "aban");
 
         assert_eq!(entry.accepted(), ["ABANDON"]);
@@ -306,7 +310,7 @@ mod tests {
 
     #[test]
     fn the_cursor_skips_letters_that_spell_nothing() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         spell(&mut entry, "ab");
 
         // "ab" continues only into a, i, l, o, s, u.
@@ -322,7 +326,7 @@ mod tests {
 
     #[test]
     fn a_dead_end_letter_cannot_be_added() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         spell(&mut entry, "aband");
 
         // Only "abandon" continues, so O is the one letter on offer.
@@ -337,7 +341,7 @@ mod tests {
 
     #[test]
     fn a_finished_word_offers_no_letter() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         spell(&mut entry, "abandon");
 
         assert!(entry.reachable().is_empty());
@@ -350,7 +354,7 @@ mod tests {
 
     #[test]
     fn a_word_that_extends_another_still_offers_its_extensions() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         spell(&mut entry, "add");
 
         // "add" is a word, but "addict" and "address" continue it.
@@ -364,7 +368,7 @@ mod tests {
 
     #[test]
     fn an_ambiguous_prefix_is_refused_and_kept() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         spell(&mut entry, "ab");
 
         assert!(entry.press(Action::Confirm));
@@ -376,7 +380,7 @@ mod tests {
 
     #[test]
     fn the_next_keypress_clears_a_refusal() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         spell(&mut entry, "ab");
         entry.press(Action::Confirm);
         assert!(entry.rejected());
@@ -390,7 +394,7 @@ mod tests {
 
     #[test]
     fn a_refused_word_can_be_finished_and_accepted() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         spell(&mut entry, "ab");
         entry.press(Action::Confirm);
 
@@ -402,7 +406,7 @@ mod tests {
 
     #[test]
     fn delete_backs_out_of_a_word_letter_by_letter() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         spell(&mut entry, "aband");
 
         assert!(entry.press(Action::Back));
@@ -414,7 +418,7 @@ mod tests {
 
     #[test]
     fn delete_on_an_empty_word_reopens_the_previous_one() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         enter(&mut entry, "abandon");
         assert_eq!(entry.word_number(), 2);
 
@@ -426,7 +430,7 @@ mod tests {
 
     #[test]
     fn an_entry_is_empty_only_with_no_letters_and_no_words() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
         assert!(entry.is_empty());
 
         add_letter(&mut entry, 'a');
@@ -442,7 +446,7 @@ mod tests {
 
     #[test]
     fn delete_at_the_very_start_does_nothing() {
-        let mut entry = WordEntry::new();
+        let mut entry = WordEntry::new(SeedLength::Words12);
 
         assert!(!entry.press(Action::Back));
         assert_eq!(entry.current(), "");
@@ -450,25 +454,32 @@ mod tests {
 
     #[test]
     fn a_finished_phrase_takes_no_more_words() {
-        let mut entry = WordEntry::new();
-        for _ in 0..WORD_COUNT {
-            enter(&mut entry, "abandon");
+        for length in SeedLength::ALL {
+            let mut entry = WordEntry::new(length);
+            let count = length.entered_words();
+            assert_eq!(entry.word_count(), count);
+
+            for _ in 0..count {
+                assert!(!entry.is_complete());
+                enter(&mut entry, "abandon");
+            }
+
+            assert!(entry.is_complete());
+            assert_eq!(entry.accepted().len(), count);
+            assert_eq!(entry.word_number(), count);
+
+            // Nothing is on offer, so no action can grow the phrase past its
+            // length.
+            assert!(entry.reachable().is_empty());
+            assert!(!entry.press(Action::Select));
+            assert!(!entry.press(Action::Confirm));
+            assert_eq!(entry.accepted().len(), count);
+
+            // `Back` is the way back in, and reopens the last word.
+            assert!(entry.press(Action::Back));
+            assert!(!entry.is_complete());
+            assert_eq!(entry.current(), "ABANDON");
         }
-
-        assert!(entry.is_complete());
-        assert_eq!(entry.accepted().len(), WORD_COUNT);
-        assert_eq!(entry.word_number(), WORD_COUNT);
-
-        // Nothing is on offer, so no action can grow the phrase past its length.
-        assert!(entry.reachable().is_empty());
-        assert!(!entry.press(Action::Select));
-        assert!(!entry.press(Action::Confirm));
-        assert_eq!(entry.accepted().len(), WORD_COUNT);
-
-        // `Back` is the way back in, and reopens the last word.
-        assert!(entry.press(Action::Back));
-        assert!(!entry.is_complete());
-        assert_eq!(entry.current(), "ABANDON");
     }
 
     #[test]
@@ -477,7 +488,7 @@ mod tests {
         // never put a real word out of reach. Checked for all 2048 rather than
         // for a sample, since it is the whole basis for hiding letters at all.
         for word in bip39_wordlist::words() {
-            let mut entry = WordEntry::new();
+            let mut entry = WordEntry::new(SeedLength::Words12);
             enter(&mut entry, word);
 
             let expected: Word = word.chars().map(|c| c.to_ascii_uppercase()).collect();

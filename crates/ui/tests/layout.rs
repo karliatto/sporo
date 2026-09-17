@@ -6,9 +6,9 @@ use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 
 use sporo_app::{action::Action, menu::MenuItem, view::View, word_entry::WordEntry};
 use sporo_core::{
-    bip39::{Mnemonic, WORD_COUNT, WORD_COUNT_TOTAL},
+    bip39::{self, Mnemonic, SeedLength, Word},
     bip39_wordlist::{self, ALPHABET},
-    flips::{Flip, Flips, FLIP_COUNT},
+    flips::{Flip, Flips},
 };
 use sporo_ui::{render, BACKGROUND_COLOR};
 
@@ -131,7 +131,10 @@ fn the_home_screen_fits_the_panel() {
 #[test]
 fn a_fresh_word_screen_fits_the_panel() {
     let mut display = Recorder::new(PANEL);
-    render(&mut display, &View::Words(&WordEntry::new()));
+    render(
+        &mut display,
+        &View::Words(&WordEntry::new(SeedLength::Words12)),
+    );
 
     display.assert_within_panel("an empty word screen");
 }
@@ -145,7 +148,7 @@ fn the_longest_word_plus_its_preview_fits_the_panel() {
 
     // Stop one letter short, so a preview letter is still on offer to the right
     // of the word — that is what makes this the widest line, not just the word.
-    let mut entry = WordEntry::new();
+    let mut entry = WordEntry::new(SeedLength::Words12);
     spell(&mut entry, &longest[..longest.len() - 1]);
     assert!(
         entry.selected().is_some(),
@@ -163,7 +166,7 @@ fn the_longest_word_plus_its_preview_fits_the_panel() {
 /// a full-length one there is its own width case.
 #[test]
 fn a_word_screen_carrying_the_longest_previous_word_fits_the_panel() {
-    let mut entry = WordEntry::new();
+    let mut entry = WordEntry::new(SeedLength::Words12);
     spell(&mut entry, longest_word());
     assert!(entry.press(Action::Confirm));
     assert!(!entry.rejected(), "the longest word was refused");
@@ -174,15 +177,36 @@ fn a_word_screen_carrying_the_longest_previous_word_fits_the_panel() {
     display.assert_within_panel("a word screen showing the previous word");
 }
 
+/// A phrase of `length` made of the longest word throughout. The final word is
+/// derived, so it may not be the longest; every entered one is.
+fn longest_phrase(length: SeedLength) -> Mnemonic {
+    let longest: Word = longest_word().chars().collect();
+    let entered: heapless::Vec<Word, { bip39::MAX_WORD_COUNT }> =
+        core::iter::repeat_n(longest, length.entered_words()).collect();
+
+    bip39::complete(length, &entered, 0).expect("the longest word is in the list")
+}
+
+/// Every page of both lengths, since the second page of a 24-word phrase is the
+/// one with two-digit numbers down its first column.
 #[test]
 fn the_wordlist_screen_fits_the_panel() {
-    let longest = longest_word();
-    let mnemonic: Mnemonic = [longest; WORD_COUNT_TOTAL];
+    for length in SeedLength::ALL {
+        let mnemonic = longest_phrase(length);
 
-    let mut display = Recorder::new(PANEL);
-    render(&mut display, &View::Phrase(&mnemonic));
+        for page in 0..sporo_app::view::phrase_pages(&mnemonic) {
+            let mut display = Recorder::new(PANEL);
+            render(
+                &mut display,
+                &View::Phrase {
+                    mnemonic: &mnemonic,
+                    page,
+                },
+            );
 
-    display.assert_within_panel("the wordlist screen");
+            display.assert_within_panel("the wordlist screen");
+        }
+    }
 }
 
 /// The alphabet strip is 26 cells on one line, the longest fixed run any screen
@@ -191,16 +215,18 @@ fn the_wordlist_screen_fits_the_panel() {
 /// widest because every letter is still live.
 #[test]
 fn the_alphabet_strip_fits_the_panel() {
-    let mut entry = WordEntry::new();
-    for _ in 0..WORD_COUNT - 1 {
-        spell(&mut entry, "abandon");
-        assert!(entry.press(Action::Confirm));
+    for length in SeedLength::ALL {
+        let mut entry = WordEntry::new(length);
+        for _ in 0..length.entered_words() - 1 {
+            spell(&mut entry, "abandon");
+            assert!(entry.press(Action::Confirm));
+        }
+
+        let mut display = Recorder::new(PANEL);
+        render(&mut display, &View::Words(&entry));
+
+        display.assert_within_panel("the alphabet strip on the last word");
     }
-
-    let mut display = Recorder::new(PANEL);
-    render(&mut display, &View::Words(&entry));
-
-    display.assert_within_panel("the alphabet strip on the last word");
 }
 
 /// Every entry is drawn in one face chosen from the longest label, so the
@@ -223,23 +249,25 @@ fn the_menu_screen_fits_the_panel_at_every_cursor_position() {
 /// one where every cell is inked.
 #[test]
 fn a_coin_screen_fits_the_panel_at_every_count() {
-    let mut flips = Flips::new();
+    for length in SeedLength::ALL {
+        let mut flips = Flips::new(length);
 
-    for count in 0..=FLIP_COUNT {
-        assert_eq!(flips.count(), count);
+        for count in 0..=flips.required() {
+            assert_eq!(flips.count(), count);
 
-        let mut display = Recorder::new(PANEL);
-        render(&mut display, &View::Coin(&flips));
+            let mut display = Recorder::new(PANEL);
+            render(&mut display, &View::Coin(&flips));
 
-        display.assert_within_panel("the coin screen");
+            display.assert_within_panel("the coin screen");
 
-        // Alternating, so both glyphs are measured: `H` and `T` need not be the
-        // same width in a proportional face.
-        flips.record(if count % 2 == 0 {
-            Flip::Heads
-        } else {
-            Flip::Tails
-        });
+            // Alternating, so both glyphs are measured: `H` and `T` need not be
+            // the same width in a proportional face.
+            flips.record(if count % 2 == 0 {
+                Flip::Heads
+            } else {
+                Flip::Tails
+            });
+        }
     }
 }
 
@@ -268,7 +296,10 @@ fn the_about_screen_fits_the_panel() {
 #[test]
 fn the_panel_check_catches_a_screen_that_does_not_fit() {
     let mut display = Recorder::new(Size::new(128, 64));
-    render(&mut display, &View::Words(&WordEntry::new()));
+    render(
+        &mut display,
+        &View::Words(&WordEntry::new(SeedLength::Words12)),
+    );
 
     assert!(
         !display.within_panel(),

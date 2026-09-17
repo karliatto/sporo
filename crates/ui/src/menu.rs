@@ -6,6 +6,7 @@ use embedded_graphics::{
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 use sporo_app::{action::Action, menu::MenuItem};
+use sporo_core::bip39::SeedLength;
 
 use crate::{
     best_fit_font,
@@ -43,7 +44,8 @@ const BOX_PADDING: i32 = 6;
 /// complain.
 pub(crate) const fn label(item: MenuItem) -> &'static str {
     match item {
-        MenuItem::GenerateMnemonic => "Generate 12th word mnemonic",
+        MenuItem::GenerateMnemonic(SeedLength::Words12) => "Generate 12th word",
+        MenuItem::GenerateMnemonic(SeedLength::Words24) => "Generate 24th word",
         MenuItem::About => "About",
     }
 }
@@ -72,7 +74,7 @@ where
     let font = best_fit_font(&BODY_FONTS, longest_label(), usable_width);
 
     // Every box is the full width, not sized to its label: "About" is five
-    // characters against the other entry's twenty-seven, and boxes hugging their
+    // characters against the others' eighteen, and boxes hugging their
     // text would leave the list ragged.
     let left = HORIZONTAL_MARGIN as i32;
 
