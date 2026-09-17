@@ -1,29 +1,38 @@
 //! Coin flips, packed into the entropy the final word carries.
 //!
-//! The eleven entered words fix 121 of a phrase's 128 entropy bits. The
-//! remaining seven come from here — one coin flip each.
+//! The entered words fix all but a few of a phrase's entropy bits: 121 of 128
+//! for a 12-word phrase, 253 of 256 for a 24-word one. The remaining seven, or
+//! three, come from here — one coin flip each.
 //!
 //! The chip's hardware RNG used to supply these bits. It is a real entropy
 //! source, but a seed generator whose randomness comes out of an opaque block on
 //! the die asks the user to trust exactly what this device exists not to trust; a
 //! coin on a table does not. See [`crate::bip39`] for how far that reaches — it
-//! is seven bits of 128, and the other 121 are the words the user chose.
+//! is seven bits of 128 (or three of 256), and the rest are the words the user
+//! chose.
 //!
 //! This is the packing alone: how a sequence of flips becomes bits, and in which
 //! order. It belongs with the BIP-39 arithmetic rather than with the screen that
 //! collects the flips, because getting it backwards produces a valid mnemonic for
 //! a different wallet — and nothing downstream could tell.
 
-use crate::bip39::FINAL_WORD_ENTROPY_BITS;
+use crate::bip39::SeedLength;
 
-/// Coin flips a phrase needs: one per bit of entropy the final word carries on
-/// top of the checksum.
-pub const FLIP_COUNT: usize = FINAL_WORD_ENTROPY_BITS;
+/// The most coin flips any [`SeedLength`] needs — the 12-word phrase's seven.
+pub const MAX_FLIP_COUNT: usize = 7;
 
-// The flips are packed into a single `u8`. A mnemonic length that pushed
-// FINAL_WORD_ENTROPY_BITS past eight would start shifting the earliest flip out
-// of the byte rather than failing to build.
-const _: () = assert!(FLIP_COUNT <= u8::BITS as usize);
+// The flips are packed into a single `u8`. A mnemonic length that pushed its
+// final word's entropy past eight bits would start shifting the earliest flip
+// out of the byte rather than failing to build.
+const _: () = {
+    assert!(MAX_FLIP_COUNT <= u8::BITS as usize);
+
+    let mut index = 0;
+    while index < SeedLength::ALL.len() {
+        assert!(SeedLength::ALL[index].final_word_entropy_bits() <= MAX_FLIP_COUNT);
+        index += 1;
+    }
+};
 
 /// One recorded flip.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -39,17 +48,24 @@ pub struct Flips {
     /// order [`crate::bip39::complete`] wants by the time the last one lands.
     bits: u8,
     count: usize,
-}
-
-impl Default for Flips {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Flips the phrase needs: one per bit of entropy its final word carries on
+    /// top of the checksum.
+    required: usize,
 }
 
 impl Flips {
-    pub const fn new() -> Self {
-        Self { bits: 0, count: 0 }
+    pub const fn new(length: SeedLength) -> Self {
+        Self {
+            bits: 0,
+            count: 0,
+            required: length.final_word_entropy_bits(),
+        }
+    }
+
+    /// Flips the phrase needs in all, which is also the number of slots in the
+    /// row.
+    pub const fn required(&self) -> usize {
+        self.required
     }
 
     /// Flips recorded so far, which is also the slot the next one lands in.
@@ -58,7 +74,7 @@ impl Flips {
     }
 
     pub const fn is_complete(&self) -> bool {
-        self.count == FLIP_COUNT
+        self.count == self.required
     }
 
     /// The flip recorded in `index`, or `None` for a slot not yet flipped —
@@ -78,7 +94,7 @@ impl Flips {
         }
     }
 
-    /// The flips as the low [`FLIP_COUNT`] bits of a byte, or `None` until every
+    /// The flips as the low [`Self::required`] bits of a byte, or `None` until every
     /// one of them is in.
     ///
     /// Withheld rather than returned short: a partial byte reads as a complete
@@ -132,8 +148,16 @@ mod tests {
     /// Records `pattern` left to right, reading each character as a binary digit:
     /// `1` for heads and `0` for tails. These are bits, not keys — which key
     /// records which flip is the application's business, not this module's.
+    ///
+    /// The phrase length is the one whose row `pattern` fills, so a pattern of
+    /// seven is a 12-word phrase and three a 24-word one.
     fn entered(pattern: &str) -> Flips {
-        let mut flips = Flips::new();
+        let length = SeedLength::ALL
+            .into_iter()
+            .find(|length| length.final_word_entropy_bits() == pattern.len())
+            .expect("a pattern fills some phrase length's row");
+
+        let mut flips = Flips::new(length);
         for digit in pattern.chars() {
             flips.record(if digit == '1' {
                 Flip::Heads
@@ -147,12 +171,20 @@ mod tests {
 
     #[test]
     fn a_new_entry_has_no_flips_and_no_entropy() {
-        let flips = Flips::new();
+        for length in SeedLength::ALL {
+            let flips = Flips::new(length);
 
-        assert_eq!(flips.count(), 0);
-        assert!(!flips.is_complete());
-        assert_eq!(flips.entropy(), None);
-        assert_eq!(flips.flip(0), None);
+            assert_eq!(flips.count(), 0);
+            assert!(!flips.is_complete());
+            assert_eq!(flips.entropy(), None);
+            assert_eq!(flips.flip(0), None);
+        }
+    }
+
+    #[test]
+    fn each_length_needs_as_many_flips_as_its_final_word_has_entropy_bits() {
+        assert_eq!(Flips::new(SeedLength::Words12).required(), 7);
+        assert_eq!(Flips::new(SeedLength::Words24).required(), 3);
     }
 
     #[test]
@@ -163,6 +195,10 @@ mod tests {
         // it. That is why the two patterns here are not mirror images.
         assert_eq!(entered("1000000").entropy(), Some(0b100_0000));
         assert_eq!(entered("0000001").entropy(), Some(0b000_0001));
+
+        // A 24-word phrase packs its three the same way.
+        assert_eq!(entered("100").entropy(), Some(0b100));
+        assert_eq!(entered("001").entropy(), Some(0b001));
     }
 
     #[test]
@@ -190,7 +226,7 @@ mod tests {
             assert_eq!(flips.flip(index), Some(expected), "at slot {index}");
         }
 
-        assert_eq!(flips.flip(FLIP_COUNT), None);
+        assert_eq!(flips.flip(flips.required()), None);
     }
 
     #[test]
@@ -205,15 +241,17 @@ mod tests {
 
     #[test]
     fn entropy_is_withheld_until_every_flip_is_in() {
-        let mut flips = Flips::new();
+        for length in SeedLength::ALL {
+            let mut flips = Flips::new(length);
 
-        for _ in 0..FLIP_COUNT - 1 {
+            for _ in 0..flips.required() - 1 {
+                flips.record(Flip::Tails);
+                assert_eq!(flips.entropy(), None, "at {} flips", flips.count());
+            }
+
             flips.record(Flip::Tails);
-            assert_eq!(flips.entropy(), None, "at {} flips", flips.count());
+            assert_eq!(flips.entropy(), Some(0));
         }
-
-        flips.record(Flip::Tails);
-        assert_eq!(flips.entropy(), Some(0));
     }
 
     #[test]
@@ -223,21 +261,24 @@ mod tests {
         // and this one proves the 128 flip sequences map onto the 128 values. A
         // collision here would quietly halve the entropy the user thinks they
         // provided.
-        let mut seen = [false; 1 << FLIP_COUNT];
+        for length in SeedLength::ALL {
+            let required = length.final_word_entropy_bits();
+            let mut seen = [false; 1 << MAX_FLIP_COUNT];
 
-        for value in 0..(1u8 << FLIP_COUNT) {
-            let mut flips = Flips::new();
-            for bit in (0..FLIP_COUNT).rev() {
-                flips.record(if (value >> bit) & 1 == 1 {
-                    Flip::Heads
-                } else {
-                    Flip::Tails
-                });
+            for value in 0..(1u8 << required) {
+                let mut flips = Flips::new(length);
+                for bit in (0..required).rev() {
+                    flips.record(if (value >> bit) & 1 == 1 {
+                        Flip::Heads
+                    } else {
+                        Flip::Tails
+                    });
+                }
+
+                let entropy = flips.entropy().expect("every flip was entered");
+                assert!(!seen[usize::from(entropy)], "{entropy} came up twice");
+                seen[usize::from(entropy)] = true;
             }
-
-            let entropy = flips.entropy().expect("every flip was entered");
-            assert!(!seen[usize::from(entropy)], "{entropy} came up twice");
-            seen[usize::from(entropy)] = true;
         }
     }
 
@@ -257,7 +298,7 @@ mod tests {
 
     #[test]
     fn undo_with_nothing_recorded_does_nothing() {
-        let mut flips = Flips::new();
+        let mut flips = Flips::new(SeedLength::Words12);
 
         assert!(!flips.undo());
         assert_eq!(flips.count(), 0);
@@ -271,7 +312,13 @@ mod tests {
         // phrase the user may already have written down.
         assert!(!flips.record(Flip::Heads));
         assert!(!flips.record(Flip::Tails));
-        assert_eq!(flips.count(), FLIP_COUNT);
+        assert_eq!(flips.count(), 7);
         assert_eq!(flips.entropy(), Some(0b111_1111));
+
+        // A 24-word row is full at three.
+        let mut flips = entered("101");
+        assert!(flips.is_complete());
+        assert!(!flips.record(Flip::Heads));
+        assert_eq!(flips.entropy(), Some(0b101));
     }
 }

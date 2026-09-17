@@ -62,16 +62,17 @@ character, and `firmware` reaches the BIP-39 arithmetic only through `app`.
 
 ## Where the entropy comes from
 
-Eleven words are typed; the twelfth is derived. Those eleven fix 121 of the
-phrase's 128 entropy bits, and the remaining seven come from the user — seven
-coin flips, entered on the keypad — not from the chip. The ESP32 has a hardware
-RNG and it would do the job, but a seed generator whose randomness comes out of
-an opaque block on the die asks you to trust the one thing a device like this
-exists not to trust.
+Every word but the last is typed; the last is derived. For a 12-word phrase,
+eleven words fix 121 of its 128 entropy bits and the remaining seven come from
+the user — seven coin flips, entered on the keypad — not from the chip. A
+24-word phrase works the same way: twenty-three words fix 253 of 256 bits, and
+three coin flips supply the rest. The ESP32 has a hardware RNG and it would do
+the job, but a seed generator whose randomness comes out of an opaque block on
+the die asks you to trust the one thing a device like this exists not to trust.
 
-Note the scope of that claim: it is seven bits of 128. The other 121 are the
-eleven words *you* chose, and this device cannot tell whether you chose them
-well.
+Note the scope of that claim: it is seven bits of 128, or three of 256. The
+rest are the words *you* chose, and this device cannot tell whether you chose
+them well.
 
 ## Build and flash
 

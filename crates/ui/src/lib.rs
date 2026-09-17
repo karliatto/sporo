@@ -47,7 +47,7 @@ where
         View::About { version } => about::show_about_screen(display, version),
         View::Words(words) => word::show_word_screen(display, words),
         View::Coin(flips) => coin::show_coin_screen(display, flips),
-        View::Phrase(mnemonic) => wordlist::show_wordlist_screen(display, mnemonic),
+        View::Phrase { mnemonic, page } => wordlist::show_wordlist_screen(display, mnemonic, page),
     }
 }
 
@@ -131,8 +131,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use sporo_app::{action::Action, app::App};
-    use sporo_core::bip39::WORD_COUNT;
+    use sporo_app::{action::Action, app::App, menu::MenuItem};
+    use sporo_core::bip39::SeedLength;
 
     use super::*;
     use crate::legend::{self, Hint};
@@ -146,7 +146,7 @@ mod tests {
             View::About { .. } => &about::HINTS,
             View::Words(_) => &word::HINTS,
             View::Coin(flips) => coin::hints(flips),
-            View::Phrase(_) => &wordlist::HINTS,
+            View::Phrase { mnemonic, page } => wordlist::hints(mnemonic, page),
         }
     }
 
@@ -180,7 +180,7 @@ mod tests {
         press(&mut menu, Action::Select);
 
         let mut about = menu.clone();
-        press(&mut about, Action::Down);
+        press(&mut about, Action::Up);
         press(&mut about, Action::Select);
 
         let mut words = menu.clone();
@@ -189,29 +189,41 @@ mod tests {
         // action does something: move, add, delete, and a refused accept.
         spell(&mut words, "AB");
 
-        let mut coin = menu.clone();
-        press(&mut coin, Action::Select);
-        for _ in 0..WORD_COUNT {
-            spell(&mut coin, "ABANDON");
-            press(&mut coin, Action::Confirm);
+        let mut samples = std::vec![(menu, "menu"), (about, "about"), (words, "words"),];
+
+        for length in SeedLength::ALL {
+            let mut coin = samples[0].0.clone();
+            while !matches!(
+                coin.view(),
+                View::Menu { selected } if selected == MenuItem::GenerateMnemonic(length)
+            ) {
+                press(&mut coin, Action::Down);
+            }
+            press(&mut coin, Action::Select);
+            for _ in 0..length.entered_words() {
+                spell(&mut coin, "ABANDON");
+                press(&mut coin, Action::Confirm);
+            }
+
+            let mut full = coin.clone();
+            for _ in 0..length.final_word_entropy_bits() {
+                press(&mut full, Action::Heads);
+            }
+
+            let mut phrase = full.clone();
+            press(&mut phrase, Action::Confirm);
+
+            // A 24-word phrase's second page, since its legend is its own.
+            let mut turned = phrase.clone();
+            press(&mut turned, Action::Right);
+
+            samples.push((coin, "coin, no flips"));
+            samples.push((full, "coin, every flip"));
+            samples.push((phrase, "phrase"));
+            samples.push((turned, "phrase, after a page turn"));
         }
 
-        let mut full = coin.clone();
-        for _ in 0..7 {
-            press(&mut full, Action::Heads);
-        }
-
-        let mut phrase = full.clone();
-        press(&mut phrase, Action::Confirm);
-
-        for (app, screen) in [
-            (menu, "menu"),
-            (about, "about"),
-            (words, "words"),
-            (coin, "coin, no flips"),
-            (full, "coin, every flip"),
-            (phrase, "phrase"),
-        ] {
+        for (app, screen) in samples {
             let hints = hints_for(&app.view());
 
             for action in Action::ALL {
@@ -262,6 +274,14 @@ mod tests {
         assert_eq!(
             legend::compose(&crate::wordlist::HINTS),
             "phrase complete  * to edit"
+        );
+        assert_eq!(
+            legend::compose(&crate::wordlist::PAGED_HINTS[0]),
+            "1/2  4/6 page  * to edit"
+        );
+        assert_eq!(
+            legend::compose(&crate::wordlist::PAGED_HINTS[1]),
+            "2/2  4/6 page  * to edit"
         );
         assert_eq!(legend::compose(&crate::about::HINTS), "* back");
     }

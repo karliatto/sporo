@@ -66,8 +66,8 @@ impl App {
             Screen::Menu => match self.menu.press(action) {
                 MenuEvent::Ignored => false,
                 MenuEvent::Moved => true,
-                MenuEvent::Chose(MenuItem::GenerateMnemonic) => {
-                    self.screen = Screen::Generate(Generate::new());
+                MenuEvent::Chose(MenuItem::GenerateMnemonic(length)) => {
+                    self.screen = Screen::Generate(Generate::new(length));
 
                     true
                 }
@@ -129,13 +129,15 @@ mod tests {
     use super::*;
 
     use sporo_core::{
-        bip39::{Mnemonic, WORD_COUNT},
-        flips::{Flips, FLIP_COUNT},
+        bip39::{Mnemonic, SeedLength},
+        flips::Flips,
     };
 
     use crate::word_entry::WordEntry;
 
     const VERSION: &str = "1.2.3";
+
+    use SeedLength::{Words12, Words24};
 
     /// A name for the screen on show, for assertion messages: `View` is not
     /// `Debug`, on purpose.
@@ -146,7 +148,7 @@ mod tests {
             View::About { .. } => "about",
             View::Words(_) => "words",
             View::Coin(_) => "coin",
-            View::Phrase(_) => "phrase",
+            View::Phrase { .. } => "phrase",
         }
     }
 
@@ -177,16 +179,38 @@ mod tests {
 
     fn phrase(app: &App) -> Mnemonic {
         match app.view() {
-            View::Phrase(mnemonic) => *mnemonic,
+            View::Phrase { mnemonic, .. } => *mnemonic,
             _ => panic!("expected the phrase, on {}", screen_name(app)),
         }
     }
 
-    /// From a new app, through the menu, onto an empty word screen.
-    fn open_generate() -> App {
+    fn page(app: &App) -> usize {
+        match app.view() {
+            View::Phrase { page, .. } => page,
+            _ => panic!("expected the phrase, on {}", screen_name(app)),
+        }
+    }
+
+    /// From a new app, through the menu, onto the about screen. It is the last
+    /// entry, so `Up` reaches it by wrapping.
+    fn open_about() -> App {
         let mut app = App::new(VERSION);
         press(&mut app, Action::Select);
-        assert_eq!(selected(&app), MenuItem::GenerateMnemonic);
+        press(&mut app, Action::Up);
+        assert_eq!(selected(&app), MenuItem::About);
+        press(&mut app, Action::Select);
+
+        app
+    }
+
+    /// From a new app, through the menu, onto an empty word screen for a phrase
+    /// of `length`.
+    fn open_generate(length: SeedLength) -> App {
+        let mut app = App::new(VERSION);
+        press(&mut app, Action::Select);
+        while selected(&app) != MenuItem::GenerateMnemonic(length) {
+            press(&mut app, Action::Down);
+        }
         press(&mut app, Action::Select);
 
         app
@@ -211,19 +235,25 @@ mod tests {
         assert!(press(app, Action::Confirm), "{word:?} was not accepted");
     }
 
-    fn at_the_coin_screen() -> App {
-        let mut app = open_generate();
-        for _ in 0..WORD_COUNT {
+    fn at_the_coin_screen(length: SeedLength) -> App {
+        let mut app = open_generate(length);
+        for _ in 0..length.entered_words() {
             spell_word(&mut app, "abandon");
         }
 
         app
     }
 
-    /// Eleven "abandon"s and `pattern` as flips — `1` heads, `0` tails —
-    /// confirmed onto the phrase.
+    /// Every word but the last "abandon", and `pattern` as flips — `1` heads,
+    /// `0` tails — confirmed onto the phrase. The pattern's length picks the
+    /// phrase's: seven flips for 12 words, three for 24.
     fn at_the_phrase(pattern: &str) -> App {
-        let mut app = at_the_coin_screen();
+        let length = SeedLength::ALL
+            .into_iter()
+            .find(|length| length.final_word_entropy_bits() == pattern.len())
+            .expect("a pattern fills some phrase length's row");
+
+        let mut app = at_the_coin_screen(length);
         for digit in pattern.chars() {
             press(
                 &mut app,
@@ -237,6 +267,11 @@ mod tests {
         assert!(press(&mut app, Action::Confirm));
 
         app
+    }
+
+    /// An all-tails pattern for `length`.
+    fn tails(length: SeedLength) -> &'static str {
+        &"0000000"[..length.final_word_entropy_bits()]
     }
 
     #[test]
@@ -269,7 +304,7 @@ mod tests {
         let mut app = App::new(VERSION);
         press(&mut app, Action::Down);
 
-        assert_eq!(selected(&app), MenuItem::GenerateMnemonic);
+        assert_eq!(selected(&app), MenuItem::ALL[0]);
     }
 
     #[test]
@@ -277,16 +312,13 @@ mod tests {
         let mut menu = App::new(VERSION);
         press(&mut menu, Action::Select);
 
-        let mut about = menu.clone();
-        press(&mut about, Action::Down);
-        press(&mut about, Action::Select);
-
         for (mut app, expected) in [
             (menu, "menu"),
-            (about, "about"),
-            (open_generate(), "words"),
-            (at_the_coin_screen(), "coin"),
-            (at_the_phrase("0000000"), "phrase"),
+            (open_about(), "about"),
+            (open_generate(Words12), "words"),
+            (at_the_coin_screen(Words12), "coin"),
+            (at_the_phrase(tails(Words12)), "phrase"),
+            (at_the_phrase(tails(Words24)), "phrase"),
         ] {
             assert!(!app.press(None), "a redraw was asked for on {expected}");
             assert_eq!(screen_name(&app), expected);
@@ -304,10 +336,7 @@ mod tests {
 
     #[test]
     fn the_menu_cursor_survives_a_visit_to_about() {
-        let mut app = App::new(VERSION);
-        press(&mut app, Action::Select);
-        press(&mut app, Action::Down);
-        press(&mut app, Action::Select);
+        let mut app = open_about();
         assert_eq!(screen_name(&app), "about");
 
         press(&mut app, Action::Back);
@@ -324,15 +353,12 @@ mod tests {
         press(&mut app, Action::Back);
         press(&mut app, Action::Select);
 
-        assert_eq!(selected(&app), MenuItem::About);
+        assert_eq!(selected(&app), MenuItem::ALL[1]);
     }
 
     #[test]
     fn back_on_about_returns_to_the_menu() {
-        let mut app = App::new(VERSION);
-        press(&mut app, Action::Select);
-        press(&mut app, Action::Down);
-        press(&mut app, Action::Select);
+        let mut app = open_about();
 
         match app.view() {
             View::About { version } => assert_eq!(version, VERSION),
@@ -346,24 +372,31 @@ mod tests {
     }
 
     #[test]
-    fn choosing_generate_opens_an_empty_word_screen() {
-        let app = open_generate();
+    fn choosing_generate_opens_an_empty_word_screen_for_that_length() {
+        for length in SeedLength::ALL {
+            let app = open_generate(length);
 
-        assert!(words(&app).is_empty());
-        assert_eq!(words(&app).selected(), Some('A'));
+            assert!(words(&app).is_empty());
+            assert_eq!(words(&app).selected(), Some('A'));
+            assert_eq!(words(&app).word_count(), length.entered_words());
+        }
     }
 
     #[test]
     fn back_on_an_empty_first_word_returns_to_the_menu() {
-        let mut app = open_generate();
+        for length in SeedLength::ALL {
+            let mut app = open_generate(length);
 
-        assert!(press(&mut app, Action::Back));
-        assert_eq!(screen_name(&app), "menu");
+            assert!(press(&mut app, Action::Back));
+            assert_eq!(screen_name(&app), "menu");
+            // On the entry that was chosen, so trying again is one press.
+            assert_eq!(selected(&app), MenuItem::GenerateMnemonic(length));
+        }
     }
 
     #[test]
     fn back_with_a_letter_typed_deletes_it_rather_than_leaving() {
-        let mut app = open_generate();
+        let mut app = open_generate(Words12);
         press(&mut app, Action::Select);
 
         assert!(press(&mut app, Action::Back));
@@ -372,76 +405,125 @@ mod tests {
     }
 
     #[test]
-    fn accepting_the_eleventh_word_opens_the_coin_screen() {
-        let mut app = open_generate();
-        for _ in 0..WORD_COUNT - 1 {
+    fn accepting_the_second_to_last_word_opens_the_coin_screen() {
+        for length in SeedLength::ALL {
+            let mut app = open_generate(length);
+            for _ in 0..length.entered_words() - 1 {
+                spell_word(&mut app, "abandon");
+            }
+            assert_eq!(screen_name(&app), "words");
+
             spell_word(&mut app, "abandon");
+
+            assert_eq!(flips(&app).count(), 0);
+            assert_eq!(flips(&app).required(), length.final_word_entropy_bits());
         }
-        assert_eq!(screen_name(&app), "words");
-
-        spell_word(&mut app, "abandon");
-
-        assert_eq!(flips(&app).count(), 0);
     }
 
     #[test]
-    fn confirm_is_inert_until_the_seventh_flip() {
-        let mut app = at_the_coin_screen();
+    fn confirm_is_inert_until_the_last_flip() {
+        for length in SeedLength::ALL {
+            let mut app = at_the_coin_screen(length);
 
-        for _ in 0..FLIP_COUNT {
-            assert!(!press(&mut app, Action::Confirm));
-            assert_eq!(screen_name(&app), "coin");
-            press(&mut app, Action::Heads);
+            for _ in 0..length.final_word_entropy_bits() {
+                assert!(!press(&mut app, Action::Confirm));
+                assert_eq!(screen_name(&app), "coin");
+                press(&mut app, Action::Heads);
+            }
+
+            assert!(press(&mut app, Action::Confirm));
+            assert_eq!(screen_name(&app), "phrase");
         }
-
-        assert!(press(&mut app, Action::Confirm));
-        assert_eq!(screen_name(&app), "phrase");
     }
 
     #[test]
     fn a_full_row_takes_no_more_flips() {
-        let mut app = at_the_coin_screen();
-        for _ in 0..FLIP_COUNT {
-            press(&mut app, Action::Heads);
-        }
+        for length in SeedLength::ALL {
+            let mut app = at_the_coin_screen(length);
+            let required = length.final_word_entropy_bits();
+            for _ in 0..required {
+                press(&mut app, Action::Heads);
+            }
 
-        assert!(!press(&mut app, Action::Tails));
-        assert_eq!(flips(&app).entropy(), Some(0b111_1111));
+            assert!(!press(&mut app, Action::Tails));
+            assert_eq!(flips(&app).entropy(), Some((1 << required) - 1));
+        }
     }
 
     #[test]
     fn confirming_the_flips_shows_the_completed_phrase() {
-        // BIP-39's own vector: eleven "abandon" and seven zero bits end in
-        // "about".
-        let app = at_the_phrase("0000000");
+        // BIP-39's own vectors: eleven "abandon" and seven zero bits end in
+        // "about"; twenty-three and three end in "art".
+        for (length, expected) in [(Words12, "about"), (Words24, "art")] {
+            let app = at_the_phrase(tails(length));
 
-        let mnemonic = phrase(&app);
-        assert_eq!(mnemonic[..WORD_COUNT], ["abandon"; WORD_COUNT]);
-        assert_eq!(mnemonic[WORD_COUNT], "about");
+            let mnemonic = phrase(&app);
+            let entered = length.entered_words();
+            assert_eq!(mnemonic.words().len(), length.total_words());
+            assert!(mnemonic.words()[..entered]
+                .iter()
+                .all(|word| *word == "abandon"));
+            assert_eq!(mnemonic.final_word(), expected);
+            assert_eq!(page(&app), 0);
+        }
     }
 
     #[test]
-    fn back_on_the_phrase_reopens_the_eleventh_word() {
-        let mut app = at_the_phrase("0000000");
+    fn left_and_right_turn_the_page_of_a_24_word_phrase() {
+        let mut app = at_the_phrase(tails(Words24));
+        assert_eq!(page(&app), 0);
 
-        assert!(press(&mut app, Action::Back));
+        assert!(press(&mut app, Action::Right));
+        assert_eq!(page(&app), 1);
 
-        assert_eq!(words(&app).current(), "ABANDON");
-        assert_eq!(words(&app).accepted().len(), WORD_COUNT - 1);
+        // Two pages, so going on from the last comes back to the first.
+        assert!(press(&mut app, Action::Right));
+        assert_eq!(page(&app), 0);
+
+        assert!(press(&mut app, Action::Left));
+        assert_eq!(page(&app), 1);
+        assert!(press(&mut app, Action::Left));
+        assert_eq!(page(&app), 0);
     }
 
     #[test]
-    fn back_on_a_coin_screen_with_no_flips_reopens_the_eleventh_word() {
-        let mut app = at_the_coin_screen();
+    fn a_12_word_phrase_has_no_page_to_turn() {
+        let mut app = at_the_phrase(tails(Words12));
 
-        assert!(press(&mut app, Action::Back));
+        // One page: the keys do nothing, and cost no redraw.
+        assert!(!press(&mut app, Action::Right));
+        assert!(!press(&mut app, Action::Left));
+        assert_eq!(page(&app), 0);
+    }
 
-        assert_eq!(words(&app).current(), "ABANDON");
+    #[test]
+    fn back_on_the_phrase_reopens_the_last_entered_word() {
+        for length in SeedLength::ALL {
+            let mut app = at_the_phrase(tails(length));
+            // From the second page too, not only the first.
+            press(&mut app, Action::Right);
+
+            assert!(press(&mut app, Action::Back));
+
+            assert_eq!(words(&app).current(), "ABANDON");
+            assert_eq!(words(&app).accepted().len(), length.entered_words() - 1);
+        }
+    }
+
+    #[test]
+    fn back_on_a_coin_screen_with_no_flips_reopens_the_last_entered_word() {
+        for length in SeedLength::ALL {
+            let mut app = at_the_coin_screen(length);
+
+            assert!(press(&mut app, Action::Back));
+
+            assert_eq!(words(&app).current(), "ABANDON");
+        }
     }
 
     #[test]
     fn back_with_flips_in_takes_one_back_rather_than_leaving() {
-        let mut app = at_the_coin_screen();
+        let mut app = at_the_coin_screen(Words12);
         press(&mut app, Action::Heads);
         press(&mut app, Action::Tails);
 
@@ -452,32 +534,39 @@ mod tests {
 
     #[test]
     fn returning_from_the_phrase_keeps_the_flips() {
-        let mut app = at_the_phrase("1011010");
-        press(&mut app, Action::Back);
-        press(&mut app, Action::Confirm);
+        for (pattern, expected) in [("1011010", 0b101_1010), ("101", 0b101)] {
+            let mut app = at_the_phrase(pattern);
+            press(&mut app, Action::Back);
+            press(&mut app, Action::Confirm);
 
-        // The same seven flips are on screen, so the user can see the final
-        // word is not about to change under them.
-        assert_eq!(flips(&app).entropy(), Some(0b101_1010));
+            // The same flips are on screen, so the user can see the final word
+            // is not about to change under them.
+            assert_eq!(flips(&app).entropy(), Some(expected));
+        }
     }
 
     #[test]
     fn a_phrase_rebuilt_after_an_edit_is_the_same_phrase() {
-        let mut app = at_the_phrase("1011010");
-        let first = phrase(&app);
+        for pattern in ["1011010", "101"] {
+            let mut app = at_the_phrase(pattern);
+            let first = phrase(&app);
+            press(&mut app, Action::Right);
 
-        press(&mut app, Action::Back);
-        press(&mut app, Action::Confirm);
-        press(&mut app, Action::Confirm);
+            press(&mut app, Action::Back);
+            press(&mut app, Action::Confirm);
+            press(&mut app, Action::Confirm);
 
-        assert_eq!(phrase(&app), first);
+            assert_eq!(phrase(&app), first);
+            // Rebuilt from the start, rather than on the page left.
+            assert_eq!(page(&app), 0);
+        }
     }
 
     #[test]
     fn backing_out_to_the_menu_forgets_the_flips() {
         let mut app = at_the_phrase("1011010");
 
-        // All the way out: reopen the eleventh word, then delete every letter of
+        // All the way out: reopen the last word, then delete every letter of
         // every word until `Back` has nothing left and leaves.
         for _ in 0..1_000 {
             if screen_name(&app) == "menu" {
@@ -488,7 +577,7 @@ mod tests {
         assert_eq!(screen_name(&app), "menu");
 
         press(&mut app, Action::Select);
-        for _ in 0..WORD_COUNT {
+        for _ in 0..Words12.entered_words() {
             spell_word(&mut app, "abandon");
         }
 
@@ -499,7 +588,7 @@ mod tests {
 
     #[test]
     fn generating_again_starts_from_a_fresh_phrase() {
-        let mut app = open_generate();
+        let mut app = open_generate(Words12);
         press(&mut app, Action::Right);
         press(&mut app, Action::Right);
         press(&mut app, Action::Back);
@@ -514,17 +603,13 @@ mod tests {
 
     #[test]
     fn reset_from_anywhere_shows_home() {
-        let mut about = App::new(VERSION);
-        press(&mut about, Action::Select);
-        press(&mut about, Action::Down);
-        press(&mut about, Action::Select);
-
         for mut app in [
             App::new(VERSION),
-            about,
-            open_generate(),
-            at_the_coin_screen(),
-            at_the_phrase("0000000"),
+            open_about(),
+            open_generate(Words12),
+            at_the_coin_screen(Words12),
+            at_the_phrase(tails(Words12)),
+            at_the_phrase(tails(Words24)),
         ] {
             app.reset();
 
@@ -543,12 +628,12 @@ mod tests {
 
         // The board button is "start over", and resuming on whatever was last
         // picked is not that.
-        assert_eq!(selected(&app), MenuItem::GenerateMnemonic);
+        assert_eq!(selected(&app), MenuItem::ALL[0]);
     }
 
     #[test]
     fn reset_mid_phrase_forgets_the_words_and_the_flips() {
-        let mut app = at_the_coin_screen();
+        let mut app = at_the_coin_screen(Words12);
         press(&mut app, Action::Heads);
 
         app.reset();
@@ -561,7 +646,7 @@ mod tests {
     #[test]
     fn a_key_that_changes_nothing_asks_for_no_redraw() {
         // Every redraw is a full-screen blit, so these matter on the device.
-        let mut app = open_generate();
+        let mut app = open_generate(Words12);
         spell(&mut app, "abando");
 
         // "abando" continues only into "abandon", so the cursor has nowhere to
@@ -569,7 +654,7 @@ mod tests {
         assert!(!press(&mut app, Action::Right));
         assert!(!press(&mut app, Action::Heads));
 
-        let mut coin = at_the_coin_screen();
+        let mut coin = at_the_coin_screen(Words12);
         assert!(!press(&mut coin, Action::Select));
     }
 }

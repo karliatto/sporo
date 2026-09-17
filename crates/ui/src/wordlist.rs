@@ -1,8 +1,11 @@
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
-use sporo_app::action::Action;
-use sporo_core::bip39::{Mnemonic, WORD_COUNT_TOTAL};
+use sporo_app::{
+    action::Action,
+    view::{self, PHRASE_PAGE_SIZE},
+};
+use sporo_core::bip39::{Mnemonic, MAX_WORD_COUNT_TOTAL};
 
 use crate::{
     best_fit_font,
@@ -11,14 +14,42 @@ use crate::{
     TEXT_COLOR,
 };
 
-/// The legend under the finished phrase.
+/// The legend under a finished phrase that fits one page.
 pub(crate) const HINTS: [Hint; 2] = [
     Hint::note("phrase complete"),
     Hint::new(&[Action::Back], "to edit"),
 ];
 
+/// The legend under each page of a phrase that takes two, led by which page is
+/// on show. Written out per page rather than composed at runtime, so every
+/// legend stays `'static` and pinned by the legend tests.
+pub(crate) const PAGED_HINTS: [[Hint; 3]; 2] = [
+    [
+        Hint::note("1/2"),
+        Hint::new(&[Action::Left, Action::Right], "page"),
+        Hint::new(&[Action::Back], "to edit"),
+    ],
+    [
+        Hint::note("2/2"),
+        Hint::new(&[Action::Left, Action::Right], "page"),
+        Hint::new(&[Action::Back], "to edit"),
+    ],
+];
+
+// A phrase long enough for a third page would index past `PAGED_HINTS`.
+const _: () = assert!(MAX_WORD_COUNT_TOTAL.div_ceil(PHRASE_PAGE_SIZE) <= PAGED_HINTS.len());
+
+/// The legend for `page` of `mnemonic`.
+pub(crate) fn hints(mnemonic: &Mnemonic, page: usize) -> &'static [Hint] {
+    if view::phrase_pages(mnemonic) > 1 {
+        &PAGED_HINTS[page]
+    } else {
+        &HINTS
+    }
+}
+
 const WORDLIST_ROWS: usize = 6;
-const WORDLIST_COLUMNS: usize = WORD_COUNT_TOTAL / WORDLIST_ROWS;
+const WORDLIST_COLUMNS: usize = PHRASE_PAGE_SIZE / WORDLIST_ROWS;
 
 const WORDLIST_NUMBER_WIDTH: i32 = 13;
 const WORDLIST_NUMBER_GAP: i32 = 4;
@@ -28,9 +59,12 @@ const WORDLIST_TOP: i32 = 5;
 const WORDLIST_HINT_SPACE: i32 = 16;
 
 // Three columns would silently overlap rather than fail to build.
-const _: () = assert!(WORDLIST_ROWS * WORDLIST_COLUMNS == WORD_COUNT_TOTAL);
+const _: () = assert!(WORDLIST_ROWS * WORDLIST_COLUMNS == PHRASE_PAGE_SIZE);
 
-pub(crate) fn show_wordlist_screen<D>(display: &mut D, mnemonic: &Mnemonic)
+/// One page of the phrase: [`PHRASE_PAGE_SIZE`] words in a numbered grid, the
+/// legend along the bottom. Numbered across pages, so the second page of a
+/// 24-word phrase runs 13-24.
+pub(crate) fn show_wordlist_screen<D>(display: &mut D, mnemonic: &Mnemonic, page: usize)
 where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
@@ -45,10 +79,15 @@ where
     let column_width = bounds.size.width as i32 / WORDLIST_COLUMNS as i32;
     let row_height = (bottom - WORDLIST_TOP - WORDLIST_HINT_SPACE) / WORDLIST_ROWS as i32;
 
-    for (position, word) in mnemonic.iter().enumerate() {
+    let words = mnemonic.words();
+    let first = page * PHRASE_PAGE_SIZE;
+
+    for (offset, word) in words.iter().skip(first).take(PHRASE_PAGE_SIZE).enumerate() {
+        let position = first + offset;
+
         // Column-major: 1-6 down the left, 7-12 down the right.
-        let column = position / WORDLIST_ROWS;
-        let row = position % WORDLIST_ROWS;
+        let column = offset / WORDLIST_ROWS;
+        let row = offset % WORDLIST_ROWS;
 
         let left = column as i32 * column_width + HORIZONTAL_MARGIN as i32;
         let y = WORDLIST_TOP + row as i32 * row_height;
@@ -67,7 +106,7 @@ where
             )
             .expect("word number render failed");
 
-        let color = if position == WORD_COUNT_TOTAL - 1 {
+        let color = if position == words.len() - 1 {
             ACCENT_COLOR
         } else {
             TEXT_COLOR
@@ -85,7 +124,7 @@ where
             .expect("word render failed");
     }
 
-    let legend = legend::compose(&HINTS);
+    let legend = legend::compose(hints(mnemonic, page));
     best_fit_font(&BODY_FONTS, legend.as_str(), usable_width)
         .render_aligned(
             legend.as_str(),
@@ -142,11 +181,12 @@ mod tests {
     }
 
     /// Numbers are right-aligned to a point 13px into their column while
-    /// rendering 18px wide, so 10-12 start 5px left of it. In the first column
+    /// rendering 18px wide, so two-digit ones start 5px left of it — and on the
+    /// second page of a 24-word phrase, every one is two digits. In the first column
     /// that overhang comes out of the left margin, and has to stay on the panel.
     #[test]
     fn a_two_digit_number_does_not_fall_off_the_left_edge() {
-        let start = column_left(0) + WORDLIST_NUMBER_WIDTH - advance("12");
+        let start = column_left(0) + WORDLIST_NUMBER_WIDTH - advance("24");
 
         assert!(
             start >= 0,
@@ -163,7 +203,7 @@ mod tests {
         let longest = longest_word();
 
         let word_end = column_left(0) + WORDLIST_NUMBER_WIDTH + WORDLIST_NUMBER_GAP + longest;
-        let next_number_start = column_left(1) + WORDLIST_NUMBER_WIDTH - advance("12");
+        let next_number_start = column_left(1) + WORDLIST_NUMBER_WIDTH - advance("24");
 
         assert!(
             word_end <= next_number_start,
