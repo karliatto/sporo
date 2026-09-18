@@ -46,7 +46,7 @@ Two workspaces, because Cargo applies the target and `build-std` from
 | Path | Contents |
 | ---- | -------- |
 | [crates/core/](crates/core/) | What a phrase *means*: the wordlist, the BIP-39 arithmetic, and how coin flips pack into the final word. No chip dependencies, so it builds and tests for the host. |
-| [crates/app/](crates/app/) | What a key *does*: the workflows (generate a phrase, about), the menu, and which screen comes next. Also chip-free, so whole workflows are walked through on the host rather than by pressing keys on the board. |
+| [crates/app/](crates/app/) | What a key *does*: the workflows (generate a phrase, XOR two phrases, about), the menu, and which screen comes next. Also chip-free, so whole workflows are walked through on the host rather than by pressing keys on the board. |
 | [crates/ui/](crates/ui/) | What the user *sees and presses*: the screens, drawn into any `DrawTarget`, and the keymap every legend is composed from. Also chip-free, so `make test` checks that what they draw lands on the panel. |
 | [firmware/](firmware/) | The board: display, keypad scan, button, and the Xtensa build settings in [firmware/.cargo/config.toml](firmware/.cargo/config.toml). It reads inputs, hands them to the app, and draws what comes back. |
 
@@ -73,6 +73,26 @@ the die asks you to trust the one thing a device like this exists not to trust.
 Note the scope of that claim: it is seven bits of 128, or three of 256. The
 rest are the words *you* chose, and this device cannot tell whether you chose
 them well.
+
+## Combining two phrases
+
+The XOR tool takes two phrases you already have — both 12 words, or both 24 —
+and combines them into a third. You type each one in full, final word included,
+and the device checks its checksum before accepting it: the final word's own
+entropy is discarded, so the checksum is the only thing that can tell a mistyped
+phrase from a real one.
+
+Every word but the last of the result is the XOR of the two inputs at that
+position. The last cannot be, because it carries the checksum over everything
+before it — the XOR of two final words is almost never a valid word — so it is
+derived the way a generated phrase's is, from coin flips, on the same screen and
+with the same counts.
+
+**This is not seed splitting.** Because the final word's entropy comes from
+fresh flips rather than from the inputs, the operation is *not reversible*:
+XORing the result back against one input does not give you the other. It
+produces a new phrase derived from two, and nothing you can use to reconstruct
+either of them.
 
 ## Build and flash
 

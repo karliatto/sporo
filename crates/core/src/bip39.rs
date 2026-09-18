@@ -223,6 +223,81 @@ pub fn complete(length: SeedLength, entered: &[Word], extra_entropy: u8) -> Opti
         return None;
     }
 
+    let mut indices = [0u16; MAX_WORD_COUNT];
+    for (slot, word) in indices.iter_mut().zip(entered) {
+        *slot = bip39_wordlist::index_of(resolve(word)?)?;
+    }
+
+    assemble(length, &indices[..entered.len()], extra_entropy)
+}
+
+/// Reads a complete phrase of `length` and checks its checksum.
+///
+/// Returns `None` unless exactly [`SeedLength::total_words`] words were given,
+/// every one resolves, and the final word is the one the words before it imply.
+/// A phrase this accepts is one other wallets accept too, so it is what stands
+/// between a mistyped word and a silently wrong answer.
+pub fn parse(length: SeedLength, words: &[Word]) -> Option<Mnemonic> {
+    if words.len() != length.total_words() {
+        return None;
+    }
+
+    let (entered, last) = words.split_at(length.entered_words());
+    let final_word = resolve(&last[0])?;
+
+    // The final word is the entropy bits it carries followed by the checksum, so
+    // dropping the checksum leaves the bits `complete` would have been handed.
+    // Rebuilding from them and comparing checks the checksum without a second
+    // implementation of it.
+    let extra = bip39_wordlist::index_of(final_word)? >> length.checksum_bits();
+    let mnemonic = complete(length, entered, extra as u8)?;
+
+    (mnemonic.final_word() == final_word).then_some(mnemonic)
+}
+
+/// XORs two phrases of the same length into a third.
+///
+/// Every word but the last is the XOR of the two inputs' words at that
+/// position; the last is derived from `extra_entropy` and the checksum, exactly
+/// as [`complete`] derives it.
+///
+/// **The result is not reversible.** The final word's entropy bits come from
+/// `extra_entropy` rather than from the inputs, so those bits of `a` and `b` are
+/// not in the output and `xor(result, b)` does not give back `a`. This combines
+/// two phrases into a new one; it is not a way to split a seed into shares.
+///
+/// Returns `None` if the lengths differ.
+pub fn xor(a: &Mnemonic, b: &Mnemonic, extra_entropy: u8) -> Option<Mnemonic> {
+    if a.length != b.length {
+        return None;
+    }
+
+    let length = a.length;
+    let entered = length.entered_words();
+
+    // Each word is 11 aligned bits of the entropy, so XORing the indices is
+    // XORing those bits — and the result is 11 bits too, always a word.
+    let mut indices = [0u16; MAX_WORD_COUNT];
+    for (slot, (word_a, word_b)) in indices
+        .iter_mut()
+        .zip(a.words[..entered].iter().zip(&b.words[..entered]))
+    {
+        *slot = bip39_wordlist::index_of(word_a)? ^ bip39_wordlist::index_of(word_b)?;
+    }
+
+    assemble(length, &indices[..entered], extra_entropy)
+}
+
+/// Builds a mnemonic from the wordlist indices of every word but the last, plus
+/// the entropy bits that last word carries.
+///
+/// The checksum is computed here and nowhere else, so every phrase the device
+/// produces — generated or XORed — is checksummed by the same code.
+fn assemble(length: SeedLength, indices: &[u16], extra_entropy: u8) -> Option<Mnemonic> {
+    if indices.len() != length.entered_words() {
+        return None;
+    }
+
     let mut mnemonic = Mnemonic {
         words: [""; MAX_WORD_COUNT_TOTAL],
         length,
@@ -233,15 +308,9 @@ pub fn complete(length: SeedLength, entered: &[Word], extra_entropy: u8) -> Opti
     let mut packed = [0u8; MAX_PACKED_BYTES];
     let mut position = 0;
 
-    for (slot, word) in mnemonic.words.iter_mut().zip(entered) {
-        let canonical = resolve(word)?;
-        push_bits(
-            &mut packed,
-            &mut position,
-            bip39_wordlist::index_of(canonical)?,
-            BITS_PER_WORD,
-        );
-        *slot = canonical;
+    for (slot, &index) in mnemonic.words.iter_mut().zip(indices) {
+        push_bits(&mut packed, &mut position, index, BITS_PER_WORD);
+        *slot = bip39_wordlist::word_at(index)?;
     }
 
     let extra_bits = length.final_word_entropy_bits();
@@ -514,5 +583,191 @@ mod tests {
         for word in bip39_wordlist::words() {
             assert_eq!(resolve(word), Some(word));
         }
+    }
+
+    /// Every word of a finished mnemonic, as [`parse`] takes them.
+    fn spelled(mnemonic: &Mnemonic) -> heapless::Vec<Word, MAX_WORD_COUNT_TOTAL> {
+        mnemonic.words().iter().copied().map(word).collect()
+    }
+
+    /// The vector phrases, completed, to XOR and re-parse.
+    fn completed() -> impl Iterator<Item = (SeedLength, Mnemonic)> {
+        vectors().map(|(length, phrase, extra, _)| {
+            (
+                length,
+                complete(length, &entered(&phrase), extra).expect("vector words are in the list"),
+            )
+        })
+    }
+
+    #[test]
+    fn parse_accepts_the_bip39_reference_vectors() {
+        for (length, mnemonic) in completed() {
+            assert_eq!(
+                parse(length, &spelled(&mnemonic)),
+                Some(mnemonic),
+                "a phrase this module built was refused when read back"
+            );
+        }
+    }
+
+    /// The whole reason the final word is worth typing: its entropy bits are
+    /// replaced by the coin flips, so the checksum is all it is read for.
+    #[test]
+    fn parse_refuses_a_phrase_whose_final_word_is_wrong() {
+        for (length, mnemonic) in completed() {
+            let mut words = spelled(&mnemonic);
+            let last = words.len() - 1;
+
+            for replacement in ["abandon", "zoo", "legal"] {
+                if replacement == mnemonic.final_word() {
+                    continue;
+                }
+                words[last] = word(replacement);
+
+                assert_eq!(
+                    parse(length, &words),
+                    None,
+                    "{replacement:?} passed as the final word of a {length:?} phrase"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parse_refuses_a_phrase_of_the_wrong_length() {
+        for (length, mnemonic) in completed() {
+            let words = spelled(&mnemonic);
+
+            assert_eq!(parse(length, &words[..words.len() - 1]), None);
+            assert_eq!(
+                parse(
+                    match length {
+                        Words12 => Words24,
+                        Words24 => Words12,
+                    },
+                    &words
+                ),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn xor_refuses_phrases_of_different_lengths() {
+        let short = complete(Words12, &entered(&repeated("abandon", 11)), 0).unwrap();
+        let long = complete(Words24, &entered(&repeated("abandon", 23)), 0).unwrap();
+
+        assert_eq!(xor(&short, &long, 0), None);
+        assert_eq!(xor(&long, &short, 0), None);
+    }
+
+    /// `x ^ x == 0`, and index 0 is `abandon`, so the entered words all collapse
+    /// to it. The final word does not, because it is derived rather than XORed.
+    #[test]
+    fn xoring_a_phrase_with_itself_clears_every_entered_word() {
+        for (length, mnemonic) in completed() {
+            let result = xor(&mnemonic, &mnemonic, 0).expect("the lengths match");
+
+            for word in &result.words()[..length.entered_words()] {
+                assert_eq!(*word, "abandon");
+            }
+        }
+    }
+
+    #[test]
+    fn xor_combines_the_entered_words_pairwise() {
+        let a = complete(Words24, &entered(&repeated("zoo", 23)), 7).unwrap();
+        let b = complete(
+            Words24,
+            &entered(&repeated(
+                "letter advice cage absurd amount doctor acoustic avoid",
+                23,
+            )),
+            0,
+        )
+        .unwrap();
+
+        let result = xor(&a, &b, 0).expect("the lengths match");
+
+        for index in 0..Words24.entered_words() {
+            let index_of = |word| bip39_wordlist::index_of(word).unwrap();
+
+            assert_eq!(
+                index_of(result.words()[index]),
+                index_of(a.words()[index]) ^ index_of(b.words()[index]),
+            );
+        }
+    }
+
+    /// Whatever goes in, what comes out is a phrase another wallet will accept.
+    ///
+    /// Every pair of vectors of a length, against the extremes of the entropy
+    /// the final word can carry. `resolve` scans the wordlist per word, so
+    /// sweeping all 256 byte values here would cost a minute to re-cover what
+    /// [`every_extra_value_yields_a_distinct_final_word`] already covers.
+    #[test]
+    fn every_xor_result_is_a_phrase_that_parses() {
+        for (length, a) in completed() {
+            let mask = (1u8 << length.final_word_entropy_bits()) - 1;
+
+            for (other, b) in completed() {
+                if other != length {
+                    continue;
+                }
+
+                for extra in [0, 1, mask / 2, mask] {
+                    let result = xor(&a, &b, extra).expect("the lengths match");
+
+                    assert_eq!(
+                        parse(length, &spelled(&result)),
+                        Some(result),
+                        "a XORed phrase failed its own checksum"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The other half of the sweep above, kept to one pair so every value of the
+    /// final word's entropy is still exercised through [`xor`].
+    #[test]
+    fn xor_accepts_every_value_the_flips_can_produce() {
+        for (length, a) in completed() {
+            for extra in 0..1u16 << length.final_word_entropy_bits() {
+                let result = xor(&a, &a, extra as u8).expect("the lengths match");
+
+                assert_eq!(parse(length, &spelled(&result)), Some(result));
+            }
+        }
+    }
+
+    /// The property the tool deliberately gives up, pinned so nobody restores it
+    /// by accident and nobody documents it as seed splitting: the final word's
+    /// entropy comes from the flips, so XORing back does not return the input.
+    #[test]
+    fn xor_is_not_reversible_through_the_final_word() {
+        let a = complete(Words12, &entered(&repeated("zoo", 11)), 127).unwrap();
+        let b = complete(
+            Words12,
+            &entered(&repeated(
+                "legal winner thank year wave sausage worth useful",
+                11,
+            )),
+            42,
+        )
+        .unwrap();
+
+        let result = xor(&a, &b, 0).expect("the lengths match");
+        let back = xor(&result, &b, 0).expect("the lengths match");
+
+        // Every word but the last comes back, which is what makes the loss
+        // specific rather than general.
+        assert_eq!(
+            back.words()[..Words12.entered_words()],
+            a.words()[..Words12.entered_words()]
+        );
+        assert_ne!(back.final_word(), a.final_word());
+        assert_ne!(back, a);
     }
 }
