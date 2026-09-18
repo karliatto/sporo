@@ -22,7 +22,7 @@
 use heapless::Vec;
 
 use sporo_core::{
-    bip39::{SeedLength, Word, MAX_WORD_COUNT},
+    bip39::{SeedLength, Word, MAX_WORD_COUNT_TOTAL},
     bip39_wordlist::{self, LetterSet, ALPHABET},
 };
 
@@ -30,9 +30,10 @@ use crate::action::Action;
 
 #[derive(Clone)]
 pub struct WordEntry {
-    accepted: Vec<Word, MAX_WORD_COUNT>,
-    /// Decides how many words make the phrase complete.
-    length: SeedLength,
+    accepted: Vec<Word, MAX_WORD_COUNT_TOTAL>,
+    /// How many words make the phrase complete: every word but the derived one
+    /// when generating, every word when reading a phrase back in.
+    target: usize,
     current: Word,
     cursor: usize,
     /// Letters that extend [`Self::current`] towards a real word. Derived from
@@ -42,10 +43,22 @@ pub struct WordEntry {
 }
 
 impl WordEntry {
+    /// Entry for a phrase being generated: every word but the derived last one.
     pub fn new(length: SeedLength) -> Self {
+        Self::of(length.entered_words())
+    }
+
+    /// Entry for a phrase the user already has, final word and all — what a tool
+    /// reading a phrase back in needs, since the final word is the only thing
+    /// that can be checked against the rest.
+    pub fn full(length: SeedLength) -> Self {
+        Self::of(length.total_words())
+    }
+
+    fn of(target: usize) -> Self {
         let mut entry = Self {
             accepted: Vec::new(),
-            length,
+            target,
             current: Word::new(),
             cursor: 0,
             reachable: LetterSet::EMPTY,
@@ -104,10 +117,10 @@ impl WordEntry {
         (self.accepted.len() + 1).min(self.word_count())
     }
 
-    /// Words to be entered in all: every word of the phrase but the derived
-    /// last one.
+    /// Words to be entered in all, which is what "complete" is measured
+    /// against — see [`Self::new`] and [`Self::full`] for the two counts.
     pub fn word_count(&self) -> usize {
-        self.length.entered_words()
+        self.target
     }
 
     pub fn is_complete(&self) -> bool {

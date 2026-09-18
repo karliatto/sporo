@@ -15,15 +15,25 @@ pub enum MenuItem {
     /// word derived from both — eleven words and seven flips for 12, twenty-three
     /// and three for 24.
     GenerateMnemonic(SeedLength),
+    /// Two phrases the user already has, typed in full and XORed into a third.
+    /// The length is picked inside the workflow rather than here: the panel has
+    /// no room for a fifth entry.
+    XorPhrases,
     /// Firmware version and the shape of the phrase it builds.
     About,
 }
 
 impl MenuItem {
     /// Every entry, in the order they are drawn and walked.
-    pub const ALL: [Self; 3] = [
+    ///
+    /// Adding one costs vertical space — the entries are centred and the legend
+    /// is pinned to the bottom, so they grow towards each other. `the_entries
+    /// _stay_clear_of_the_hint_line` in the menu screen is what says when there
+    /// is no more room.
+    pub const ALL: [Self; 4] = [
         Self::GenerateMnemonic(SeedLength::Words12),
         Self::GenerateMnemonic(SeedLength::Words24),
+        Self::XorPhrases,
         Self::About,
     ];
 }
@@ -99,24 +109,20 @@ mod tests {
         assert_eq!(Menu::new().selected(), MenuItem::ALL[0]);
     }
 
+    /// Walked against [`MenuItem::ALL`] rather than against entries by name, so
+    /// adding one does not mean editing this.
     #[test]
     fn the_cursor_wraps_forwards() {
         let mut menu = Menu::new();
 
-        assert_eq!(menu.press(Action::Down), MenuEvent::Moved);
-        assert_eq!(
-            menu.selected(),
-            MenuItem::GenerateMnemonic(SeedLength::Words24)
-        );
-        menu.press(Action::Down);
-        assert_eq!(menu.selected(), MenuItem::About);
+        for item in MenuItem::ALL.iter().skip(1) {
+            assert_eq!(menu.press(Action::Down), MenuEvent::Moved);
+            assert_eq!(menu.selected(), *item);
+        }
 
         // Past the last entry is the first again, not a dead end.
         assert_eq!(menu.press(Action::Down), MenuEvent::Moved);
-        assert_eq!(
-            menu.selected(),
-            MenuItem::GenerateMnemonic(SeedLength::Words12)
-        );
+        assert_eq!(menu.selected(), MenuItem::ALL[0]);
     }
 
     #[test]
@@ -124,7 +130,7 @@ mod tests {
         let mut menu = Menu::new();
 
         assert_eq!(menu.press(Action::Up), MenuEvent::Moved);
-        assert_eq!(menu.selected(), MenuItem::About);
+        assert_eq!(menu.selected(), *MenuItem::ALL.last().expect("never empty"));
     }
 
     #[test]

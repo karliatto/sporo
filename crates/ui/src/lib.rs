@@ -24,6 +24,7 @@ mod coin;
 mod home;
 pub mod keymap;
 mod legend;
+mod length;
 mod menu;
 mod word;
 mod wordlist;
@@ -45,7 +46,12 @@ where
         View::Home => home::show_home_screen(display),
         View::Menu { selected } => menu::show_menu_screen(display, selected),
         View::About { version } => about::show_about_screen(display, version),
-        View::Words(words) => word::show_word_screen(display, words),
+        View::SeedLengthPick { selected } => length::show_length_screen(display, selected),
+        View::Words {
+            entry,
+            label,
+            notice,
+        } => word::show_word_screen(display, entry, label, notice),
         View::Coin(flips) => coin::show_coin_screen(display, flips),
         View::Phrase { mnemonic, page } => wordlist::show_wordlist_screen(display, mnemonic, page),
     }
@@ -144,7 +150,8 @@ mod tests {
             View::Home => &[],
             View::Menu { .. } => &menu::HINTS,
             View::About { .. } => &about::HINTS,
-            View::Words(_) => &word::HINTS,
+            View::SeedLengthPick { .. } => &length::HINTS,
+            View::Words { notice, .. } => word::hints(notice),
             View::Coin(flips) => coin::hints(flips),
             View::Phrase { mnemonic, page } => wordlist::hints(mnemonic, page),
         }
@@ -159,8 +166,8 @@ mod tests {
         for letter in letters.chars() {
             for _ in 0..26 {
                 match app.view() {
-                    View::Words(words) if words.selected() == Some(letter) => break,
-                    View::Words(_) => press(app, Action::Right),
+                    View::Words { entry, .. } if entry.selected() == Some(letter) => break,
+                    View::Words { .. } => press(app, Action::Right),
                     _ => panic!("expected the word screen while spelling"),
                 }
             }
@@ -189,7 +196,39 @@ mod tests {
         // action does something: move, add, delete, and a refused accept.
         spell(&mut words, "AB");
 
-        let mut samples = std::vec![(menu, "menu"), (about, "about"), (words, "words"),];
+        // The XOR tool picks its length on a screen of its own, so that screen
+        // and the phrase entry behind it are their own samples.
+        let mut length_pick = menu.clone();
+        while !matches!(
+            length_pick.view(),
+            View::Menu { selected } if selected == MenuItem::XorPhrases
+        ) {
+            press(&mut length_pick, Action::Down);
+        }
+        press(&mut length_pick, Action::Select);
+
+        let mut xor_words = length_pick.clone();
+        press(&mut xor_words, Action::Select);
+        spell(&mut xor_words, "AB");
+
+        // A whole phrase that fails its checksum: twelve "abandon"s, where the
+        // real twelve-word phrase of them ends in "about". Nothing but `Back`
+        // does anything here, which is what the narrowed legend has to say.
+        let mut refused = length_pick.clone();
+        press(&mut refused, Action::Select);
+        for _ in 0..SeedLength::Words12.total_words() {
+            spell(&mut refused, "ABANDON");
+            press(&mut refused, Action::Confirm);
+        }
+
+        let mut samples = std::vec![
+            (menu, "menu"),
+            (about, "about"),
+            (words, "words"),
+            (length_pick, "length picker"),
+            (xor_words, "xor words"),
+            (refused, "xor words, phrase refused"),
+        ];
 
         for length in SeedLength::ALL {
             let mut coin = samples[0].0.clone();
@@ -284,5 +323,13 @@ mod tests {
             "2/2  4/6 page  * to edit"
         );
         assert_eq!(legend::compose(&crate::about::HINTS), "* back");
+        assert_eq!(
+            legend::compose(&crate::length::HINTS),
+            "2/8 move  5 select  * back"
+        );
+        assert_eq!(
+            legend::compose(crate::word::hints(Some("refused"))),
+            "* fix"
+        );
     }
 }

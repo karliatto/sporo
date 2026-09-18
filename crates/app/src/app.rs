@@ -1,8 +1,10 @@
 use crate::{
     action::Action,
-    generate::{Generate, Outcome},
+    generate::Generate,
     menu::{Menu, MenuEvent, MenuItem},
     view::View,
+    workflow::Outcome,
+    xor::Xor,
 };
 
 #[derive(Clone)]
@@ -30,6 +32,7 @@ enum Screen {
     Menu,
     About,
     Generate(Generate),
+    Xor(Xor),
 }
 
 impl App {
@@ -71,6 +74,11 @@ impl App {
 
                     true
                 }
+                MenuEvent::Chose(MenuItem::XorPhrases) => {
+                    self.screen = Screen::Xor(Xor::new());
+
+                    true
+                }
                 MenuEvent::Chose(MenuItem::About) => {
                     self.screen = Screen::About;
 
@@ -91,6 +99,15 @@ impl App {
                 action == Action::Back
             }
             Screen::Generate(generate) => match generate.press(action) {
+                Outcome::Unchanged => false,
+                Outcome::Redraw => true,
+                Outcome::Exit => {
+                    self.screen = Screen::Menu;
+
+                    true
+                }
+            },
+            Screen::Xor(xor) => match xor.press(action) {
                 Outcome::Unchanged => false,
                 Outcome::Redraw => true,
                 Outcome::Exit => {
@@ -120,6 +137,7 @@ impl App {
                 version: self.version,
             },
             Screen::Generate(generate) => generate.view(),
+            Screen::Xor(xor) => xor.view(),
         }
     }
 }
@@ -129,7 +147,7 @@ mod tests {
     use super::*;
 
     use sporo_core::{
-        bip39::{Mnemonic, SeedLength},
+        bip39::{self, Mnemonic, SeedLength, Word, MAX_WORD_COUNT},
         flips::Flips,
     };
 
@@ -146,7 +164,8 @@ mod tests {
             View::Home => "home",
             View::Menu { .. } => "menu",
             View::About { .. } => "about",
-            View::Words(_) => "words",
+            View::SeedLengthPick { .. } => "length",
+            View::Words { .. } => "words",
             View::Coin(_) => "coin",
             View::Phrase { .. } => "phrase",
         }
@@ -165,7 +184,7 @@ mod tests {
 
     fn words(app: &App) -> &WordEntry {
         match app.view() {
-            View::Words(words) => words,
+            View::Words { entry, .. } => entry,
             _ => panic!("expected the word screen, on {}", screen_name(app)),
         }
     }
@@ -656,5 +675,223 @@ mod tests {
 
         let mut coin = at_the_coin_screen(Words12);
         assert!(!press(&mut coin, Action::Select));
+    }
+
+    /// From a new app, through the menu, onto the XOR tool's length picker.
+    fn open_xor() -> App {
+        let mut app = App::new(VERSION);
+        press(&mut app, Action::Select);
+        while selected(&app) != MenuItem::XorPhrases {
+            press(&mut app, Action::Down);
+        }
+        press(&mut app, Action::Select);
+        assert_eq!(screen_name(&app), "length");
+
+        app
+    }
+
+    /// The picker, moved onto `length` and confirmed: an empty phrase A.
+    fn open_xor_at(length: SeedLength) -> App {
+        let mut app = open_xor();
+        // Two choices, so at most one move reaches either.
+        if length != Words12 {
+            press(&mut app, Action::Down);
+        }
+        press(&mut app, Action::Select);
+
+        app
+    }
+
+    /// A valid phrase of `length` made of "abandon", which is what every
+    /// reference vector of that shape is: the final word is the one the rest
+    /// imply, so typing it is what gets past the checksum.
+    fn abandon_phrase(length: SeedLength) -> Mnemonic {
+        let entered: heapless::Vec<Word, MAX_WORD_COUNT> =
+            core::iter::repeat_n("abandon".chars().collect::<Word>(), length.entered_words())
+                .collect();
+
+        bip39::complete(length, &entered, 0).expect("abandon is in the wordlist")
+    }
+
+    /// Types a whole phrase, final word and all, onto the word screen.
+    fn spell_phrase(app: &mut App, mnemonic: &Mnemonic) {
+        for word in mnemonic.words() {
+            spell_word(app, word);
+        }
+    }
+
+    /// Both phrases typed in, standing on the coin screen.
+    fn at_the_xor_coin_screen(length: SeedLength) -> App {
+        let phrase = abandon_phrase(length);
+
+        let mut app = open_xor_at(length);
+        spell_phrase(&mut app, &phrase);
+        spell_phrase(&mut app, &phrase);
+        assert_eq!(screen_name(&app), "coin");
+
+        app
+    }
+
+    #[test]
+    fn the_xor_tool_asks_for_two_phrases_then_the_flips() {
+        for length in SeedLength::ALL {
+            let phrase = abandon_phrase(length);
+            let mut app = open_xor_at(length);
+
+            // Phrase A: every word of it, the final one included.
+            assert_eq!(words(&app).word_count(), length.total_words());
+            spell_phrase(&mut app, &phrase);
+
+            // Still the word screen, now on phrase B and empty again.
+            assert_eq!(screen_name(&app), "words");
+            assert!(words(&app).is_empty());
+
+            spell_phrase(&mut app, &phrase);
+            assert_eq!(screen_name(&app), "coin");
+        }
+    }
+
+    /// A phrase XORed with itself clears every entered word to `abandon`, which
+    /// makes the result readable without repeating the arithmetic here — the
+    /// bit-level cases live in `sporo_core`.
+    #[test]
+    fn the_xor_result_is_the_two_phrases_combined() {
+        for length in SeedLength::ALL {
+            let mut app = at_the_xor_coin_screen(length);
+            for _ in 0..length.final_word_entropy_bits() {
+                press(&mut app, Action::Tails);
+            }
+            assert!(press(&mut app, Action::Confirm));
+
+            let result = phrase(&app);
+            assert_eq!(result.length(), length);
+
+            for word in &result.words()[..length.entered_words()] {
+                assert_eq!(*word, "abandon");
+            }
+
+            // All-tails is zero entropy, so the final word is the checksum
+            // alone — the same phrase `Generate` builds from eleven abandons.
+            assert_eq!(result, abandon_phrase(length));
+        }
+    }
+
+    /// The final word is read for its checksum and nothing else, so this is the
+    /// only thing standing between a mistyped phrase and a plausible-looking
+    /// wrong answer.
+    #[test]
+    fn a_phrase_that_fails_its_checksum_is_refused() {
+        let mut app = open_xor_at(Words12);
+
+        // Twelve "abandon"s: the real phrase ends in "about", so this is one
+        // word wrong and nothing else.
+        for _ in 0..Words12.total_words() {
+            spell_word(&mut app, "abandon");
+        }
+
+        // Still on the word screen, and going nowhere: every key but `Back` is
+        // refused, so the user cannot walk past the mistake.
+        assert_eq!(screen_name(&app), "words");
+        for action in [Action::Select, Action::Confirm, Action::Right, Action::Up] {
+            assert!(!press(&mut app, action), "{action:?} got past a bad phrase");
+        }
+
+        // `Back` reopens the last word, which is where the correction goes.
+        assert!(press(&mut app, Action::Back));
+        assert_eq!(screen_name(&app), "words");
+        assert_eq!(words(&app).accepted().len(), Words12.entered_words());
+
+        // Corrected, it is accepted and the tool moves on to phrase B.
+        for _ in 0..7 {
+            assert!(press(&mut app, Action::Back));
+        }
+        spell_word(&mut app, "about");
+        assert!(words(&app).is_empty(), "expected an empty phrase B");
+    }
+
+    #[test]
+    fn back_walks_out_of_the_xor_tool_one_step_at_a_time() {
+        let mut app = open_xor_at(Words12);
+        let phrase = abandon_phrase(Words12);
+        spell_phrase(&mut app, &phrase);
+
+        // On phrase B with nothing typed, `Back` reopens the last word of
+        // phrase A rather than dropping it.
+        assert!(press(&mut app, Action::Back));
+        assert_eq!(screen_name(&app), "words");
+        assert_eq!(words(&app).accepted().len(), Words12.entered_words());
+        assert_eq!(words(&app).current(), "ABOUT");
+
+        // Deleting the rest of phrase A backs out to the picker, and `Back`
+        // there leaves the tool.
+        while screen_name(&app) == "words" {
+            assert!(press(&mut app, Action::Back));
+        }
+        assert_eq!(screen_name(&app), "length");
+
+        assert!(press(&mut app, Action::Back));
+        assert_eq!(screen_name(&app), "menu");
+    }
+
+    /// The property the workflow split exists to give: state lives in the
+    /// screen, so leaving is forgetting.
+    #[test]
+    fn leaving_the_xor_tool_forgets_both_phrases() {
+        let mut app = at_the_xor_coin_screen(Words12);
+        press(&mut app, Action::Heads);
+
+        // Out through the coin screen, the phrases, the picker, to the menu.
+        while screen_name(&app) != "menu" {
+            assert!(press(&mut app, Action::Back));
+        }
+
+        press(&mut app, Action::Select);
+        press(&mut app, Action::Select);
+
+        assert_eq!(screen_name(&app), "words");
+        assert!(words(&app).is_empty(), "a phrase outlived the workflow");
+    }
+
+    /// Changing the length has to resize both entries and the flips, or a
+    /// 12-word entry would be asked to hold a 24-word phrase.
+    #[test]
+    fn picking_a_length_sizes_the_phrases_to_it() {
+        for length in SeedLength::ALL {
+            let app = open_xor_at(length);
+
+            assert_eq!(words(&app).word_count(), length.total_words());
+        }
+
+        // And going back to the picker to change it takes the old length's
+        // words with it.
+        let mut app = open_xor_at(Words12);
+        spell(&mut app, "aband");
+        while screen_name(&app) == "words" {
+            press(&mut app, Action::Back);
+        }
+        press(&mut app, Action::Down);
+        press(&mut app, Action::Select);
+
+        assert_eq!(words(&app).word_count(), Words24.total_words());
+        assert!(words(&app).is_empty());
+    }
+
+    #[test]
+    fn the_xor_coin_screen_behaves_as_the_generate_one_does() {
+        let mut app = at_the_xor_coin_screen(Words12);
+
+        // Confirm does nothing until every flip is in.
+        assert!(!press(&mut app, Action::Confirm));
+        press(&mut app, Action::Heads);
+        assert_eq!(flips(&app).count(), 1);
+
+        // `Back` undoes a flip before it steps back off the screen.
+        assert!(press(&mut app, Action::Back));
+        assert_eq!(flips(&app).count(), 0);
+
+        assert!(press(&mut app, Action::Back));
+        assert_eq!(screen_name(&app), "words");
+        // Phrase B, reopened at its last word rather than cleared.
+        assert_eq!(words(&app).accepted().len(), Words12.entered_words());
     }
 }

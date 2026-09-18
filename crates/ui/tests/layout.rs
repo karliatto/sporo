@@ -114,6 +114,16 @@ fn spell(entry: &mut WordEntry, word: &str) {
     }
 }
 
+/// A plain word screen, with neither of the extras the XOR workflow adds. Those
+/// have cases of their own, since each one is more ink than this.
+fn words_view(entry: &WordEntry) -> View<'_> {
+    View::Words {
+        entry,
+        label: None,
+        notice: None,
+    }
+}
+
 fn longest_word() -> &'static str {
     bip39_wordlist::words()
         .max_by_key(|word| word.len())
@@ -133,7 +143,7 @@ fn a_fresh_word_screen_fits_the_panel() {
     let mut display = Recorder::new(PANEL);
     render(
         &mut display,
-        &View::Words(&WordEntry::new(SeedLength::Words12)),
+        &words_view(&WordEntry::new(SeedLength::Words12)),
     );
 
     display.assert_within_panel("an empty word screen");
@@ -157,7 +167,7 @@ fn the_longest_word_plus_its_preview_fits_the_panel() {
     );
 
     let mut display = Recorder::new(PANEL);
-    render(&mut display, &View::Words(&entry));
+    render(&mut display, &words_view(&entry));
 
     display.assert_within_panel("the longest word with a preview");
 }
@@ -172,9 +182,46 @@ fn a_word_screen_carrying_the_longest_previous_word_fits_the_panel() {
     assert!(!entry.rejected(), "the longest word was refused");
 
     let mut display = Recorder::new(PANEL);
-    render(&mut display, &View::Words(&entry));
+    render(&mut display, &words_view(&entry));
 
     display.assert_within_panel("a word screen showing the previous word");
+}
+
+/// The XOR tool's length picker, on each of the two choices.
+#[test]
+fn the_length_screen_fits_the_panel_at_every_choice() {
+    for selected in SeedLength::ALL {
+        let mut display = Recorder::new(PANEL);
+        render(&mut display, &View::SeedLengthPick { selected });
+
+        display.assert_within_panel("the length screen");
+    }
+}
+
+/// The XOR tool adds two things to the word screen: a phrase label on the
+/// progress line, and a notice in place of the legend. Both are drawn at their
+/// widest here, against the longest previous word in the opposite corner — the
+/// header is the line where a label could collide with something.
+#[test]
+fn a_labelled_word_screen_with_a_notice_fits_the_panel() {
+    let mut entry = WordEntry::full(SeedLength::Words24);
+    spell(&mut entry, longest_word());
+    assert!(entry.press(Action::Confirm));
+    spell(&mut entry, longest_word());
+
+    for label in ["A", "B"] {
+        let mut display = Recorder::new(PANEL);
+        render(
+            &mut display,
+            &View::Words {
+                entry: &entry,
+                label: Some(label),
+                notice: Some("phrase does not check out"),
+            },
+        );
+
+        display.assert_within_panel("a labelled word screen with a notice");
+    }
 }
 
 /// A phrase of `length` made of the longest word throughout. The final word is
@@ -223,7 +270,7 @@ fn the_alphabet_strip_fits_the_panel() {
         }
 
         let mut display = Recorder::new(PANEL);
-        render(&mut display, &View::Words(&entry));
+        render(&mut display, &words_view(&entry));
 
         display.assert_within_panel("the alphabet strip on the last word");
     }
@@ -298,7 +345,7 @@ fn the_panel_check_catches_a_screen_that_does_not_fit() {
     let mut display = Recorder::new(Size::new(128, 64));
     render(
         &mut display,
-        &View::Words(&WordEntry::new(SeedLength::Words12)),
+        &words_view(&WordEntry::new(SeedLength::Words12)),
     );
 
     assert!(

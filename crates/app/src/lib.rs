@@ -15,3 +15,5 @@ mod generate;
 pub mod menu;
 pub mod view;
 pub mod word_entry;
+mod workflow;
+mod xor;

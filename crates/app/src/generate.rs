@@ -7,6 +7,7 @@ use crate::{
     action::Action,
     view::{self, View},
     word_entry::WordEntry,
+    workflow::Outcome,
 };
 
 /// The generate workflow: every word but the last typed, a coin flipped for
@@ -39,15 +40,6 @@ enum Step {
         mnemonic: Mnemonic,
         page: usize,
     },
-}
-
-/// What an action did to the workflow, for the application to act on.
-pub(crate) enum Outcome {
-    /// Nothing changed; the screen does not need drawing again.
-    Unchanged,
-    Redraw,
-    /// `Back` with nothing left to take back: the user left the workflow.
-    Exit,
 }
 
 impl Generate {
@@ -140,7 +132,11 @@ impl Generate {
 
     pub(crate) fn view(&self) -> View<'_> {
         match &self.step {
-            Step::Words => View::Words(&self.words),
+            Step::Words => View::Words {
+                entry: &self.words,
+                label: None,
+                notice: None,
+            },
             Step::Coin => View::Coin(&self.flips),
             Step::Phrase { mnemonic, page } => View::Phrase {
                 mnemonic,

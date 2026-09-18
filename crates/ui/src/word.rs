@@ -29,6 +29,20 @@ pub(crate) const HINTS: [Hint; 4] = [
 /// the instruction is to carry on rather than to correct anything.
 const REJECT_TEXT: &str = "several words start so";
 
+/// Offered in place of [`HINTS`] once a whole phrase has been refused: it is
+/// complete, so there is no letter to add and no word to accept, and stepping
+/// back to the last word is the only thing left that does anything.
+const REFUSED_HINTS: [Hint; 1] = [Hint::new(&[Action::Back], "fix")];
+
+/// The legend for a word screen, which narrows once a phrase has been refused.
+pub(crate) fn hints(notice: Option<&str>) -> &'static [Hint] {
+    if notice.is_some() {
+        &REFUSED_HINTS
+    } else {
+        &HINTS
+    }
+}
+
 /// Gap between the top edge and the progress line.
 const HEADER_MARGIN: i32 = 4;
 
@@ -44,8 +58,12 @@ const CURSOR_BAR_HEIGHT: u32 = 2;
 /// Progress along the top, the word being spelled out across the middle, and
 /// the alphabet the cursor walks below it. Standing in for the recovery-phrase
 /// screen the real firmware has.
-pub(crate) fn show_word_screen<D>(display: &mut D, entry: &WordEntry)
-where
+pub(crate) fn show_word_screen<D>(
+    display: &mut D,
+    entry: &WordEntry,
+    label: Option<&str>,
+    notice: Option<&str>,
+) where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
 {
@@ -57,9 +75,15 @@ where
     let bottom = bounds.size.height as i32;
     let usable_width = usable_width(&bounds);
 
+    // The label rides on the progress line rather than on one of its own: the
+    // panel is 135 pixels tall and the alphabet strip and legend already claim
+    // the bottom of it.
+    let label = label.unwrap_or_default();
+    let gap = if label.is_empty() { "" } else { " " };
+
     HEADER_FONT
         .render_aligned(
-            format_args!("{}/{}", entry.word_number(), entry.word_count()),
+            format_args!("{label}{gap}{}/{}", entry.word_number(), entry.word_count()),
             Point::new(HORIZONTAL_MARGIN as i32, HEADER_MARGIN),
             VerticalPosition::Top,
             HorizontalAlignment::Left,
@@ -108,11 +132,13 @@ where
         usable_width,
     );
 
-    let legend = legend::compose(&HINTS);
-    let (hint, hint_color) = if entry.rejected() {
-        (REJECT_TEXT, WARNING_COLOR)
-    } else {
-        (legend.as_str(), ACCENT_COLOR)
+    // A refused phrase outranks a refused word: it is the larger problem, and
+    // the word screen is where both are corrected.
+    let legend = legend::compose(hints(notice));
+    let (hint, hint_color) = match (notice, entry.rejected()) {
+        (Some(notice), _) => (notice, WARNING_COLOR),
+        (None, true) => (REJECT_TEXT, WARNING_COLOR),
+        (None, false) => (legend.as_str(), ACCENT_COLOR),
     };
 
     best_fit_font(&BODY_FONTS, hint, usable_width)

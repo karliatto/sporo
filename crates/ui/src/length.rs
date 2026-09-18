@@ -5,59 +5,51 @@ use embedded_graphics::{
 };
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
-use sporo_app::{action::Action, menu::MenuItem};
+use sporo_app::action::Action;
 use sporo_core::bip39::SeedLength;
 
 use crate::{
     best_fit_font,
     legend::{self, Hint},
-    usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, DIM_COLOR, HORIZONTAL_MARGIN,
-    TEXT_COLOR,
+    usable_width, ACCENT_COLOR, BACKGROUND_COLOR, BODY_FONTS, DIM_COLOR, HEADER_FONT,
+    HORIZONTAL_MARGIN, TEXT_COLOR,
 };
 
-/// The keypad legend along the bottom of the menu.
+/// The keypad legend along the bottom. The same three as the menu's: this is a
+/// list with a cursor on it, so it is driven like one.
 pub(crate) const HINTS: [Hint; 3] = [
     Hint::new(&[Action::Up, Action::Down], "move"),
     Hint::new(&[Action::Select], "select"),
     Hint::new(&[Action::Back], "back"),
 ];
 
-/// Space between the middle of one entry's box and the middle of the next.
-/// Four pixels more than [`BOX_HEIGHT`], so the boxes read as separate rather
-/// than as one block with lines through it.
+/// What the question is, above the choices.
+const TITLE_TEXT: &str = "phrase length";
+
+/// Gap between the top edge and the title.
+const TITLE_MARGIN: i32 = 4;
+
+/// Matching the menu's, so a list of boxes is a list of boxes wherever it shows.
 const ROW_HEIGHT: i32 = 24;
-
-/// Height of the box drawn around an entry: the body face is around thirteen
-/// pixels tall, and the rest is padding.
 const BOX_HEIGHT: u32 = 20;
-
-/// Corner rounding, and the gap between a box's left edge and its label.
 const BOX_RADIUS: u32 = 3;
 const BOX_PADDING: i32 = 6;
 
-/// What an entry is called on the panel.
-///
-/// Keep labels to ASCII: every face in [`BODY_FONTS`] is a u8g2 `_tr` variant,
-/// whose glyphs stop at the end of ASCII. A character outside it makes measuring
-/// fail, and [`best_fit_font`] reads a measuring failure as "not this font" — so
-/// the menu would quietly drop to the smallest face on the list rather than
-/// complain.
-pub(crate) const fn label(item: MenuItem) -> &'static str {
-    match item {
-        MenuItem::GenerateMnemonic(SeedLength::Words12) => "Generate 12th word",
-        MenuItem::GenerateMnemonic(SeedLength::Words24) => "Generate 24th word",
-        MenuItem::XorPhrases => "XOR two phrases",
-        MenuItem::About => "About",
+/// What a length is called on the panel. ASCII only, for the reason the menu's
+/// labels are — see the note on [`crate::menu::label`].
+const fn label(length: SeedLength) -> &'static str {
+    match length {
+        SeedLength::Words12 => "12 words",
+        SeedLength::Words24 => "24 words",
     }
 }
 
-/// The entries stacked down the middle, each in a box of its own, keypad legend
-/// along the bottom.
+/// The two lengths stacked down the middle, drawn like menu entries because they
+/// behave like them.
 ///
-/// The selected box is filled and its label drawn in the background colour. That
-/// is a change of shape and not only of colour, which is what the cursor bar on
-/// the word screen exists to provide — so this screen needs no separate marker.
-pub(crate) fn show_menu_screen<D>(display: &mut D, selected: MenuItem)
+/// Only two rows, so unlike the menu this one has room to spare and a title
+/// above it saying what is being picked.
+pub(crate) fn show_length_screen<D>(display: &mut D, selected: SeedLength)
 where
     D: DrawTarget<Color = Rgb565>,
     D::Error: core::fmt::Debug,
@@ -69,21 +61,27 @@ where
     let bottom = bounds.size.height as i32;
     let usable_width = usable_width(&bounds);
 
-    // One face for every entry, chosen from the longest of them. Sizing each row
-    // on its own would render "About" large and the long entry small, which
-    // reads as two different kinds of thing rather than one list.
-    let font = best_fit_font(&BODY_FONTS, longest_label(), usable_width);
+    HEADER_FONT
+        .render_aligned(
+            TITLE_TEXT,
+            Point::new(center.x, TITLE_MARGIN),
+            VerticalPosition::Top,
+            HorizontalAlignment::Center,
+            FontColor::Transparent(TEXT_COLOR),
+            display,
+        )
+        .expect("title render failed");
 
-    // Every box is the full width, not sized to its label: "About" is five
-    // characters against the others' eighteen, and boxes hugging their
-    // text would leave the list ragged.
+    // One face for both, chosen from the longer, so the two rows read as one
+    // list rather than as two sizes of thing.
+    let font = best_fit_font(&BODY_FONTS, longest_label(), usable_width);
     let left = HORIZONTAL_MARGIN as i32;
 
-    let rows = MenuItem::ALL.len() as i32;
+    let rows = SeedLength::ALL.len() as i32;
     let first_row = center.y - (rows - 1) * ROW_HEIGHT / 2;
 
-    for (index, item) in MenuItem::ALL.iter().enumerate() {
-        let selected = *item == selected;
+    for (index, length) in SeedLength::ALL.iter().enumerate() {
+        let selected = *length == selected;
         let y = first_row + index as i32 * ROW_HEIGHT;
 
         let outline = Rectangle::new(
@@ -91,9 +89,6 @@ where
             Size::new(usable_width, BOX_HEIGHT),
         );
 
-        // Stroked on the inside, so an unselected box occupies exactly the
-        // rectangle asked for. The default alignment straddles the boundary and
-        // would put half a pixel outside it.
         let style = if selected {
             PrimitiveStyleBuilder::new()
                 .fill_color(ACCENT_COLOR)
@@ -109,10 +104,9 @@ where
         RoundedRectangle::with_equal_corners(outline, Size::new(BOX_RADIUS, BOX_RADIUS))
             .into_styled(style)
             .draw(display)
-            .expect("entry box render failed");
+            .expect("length box render failed");
 
-        // Drawn after the box, and in the background colour on top of the fill,
-        // so the selected entry reads as inverted rather than tinted.
+        // Inverted rather than tinted, as the menu's selection is.
         let color = if selected {
             BACKGROUND_COLOR
         } else {
@@ -120,7 +114,7 @@ where
         };
 
         font.render(
-            label(*item),
+            label(*length),
             Point::new(left + BOX_PADDING, y),
             VerticalPosition::Center,
             FontColor::Transparent(color),
@@ -142,34 +136,31 @@ where
         .expect("hint render failed");
 }
 
-/// The entry that decides the font for all of them.
+/// The label that decides the font for both of them.
 fn longest_label() -> &'static str {
-    MenuItem::ALL
+    SeedLength::ALL
         .iter()
-        .map(|item| label(*item))
+        .map(|length| label(*length))
         .max_by_key(|label| label.len())
-        .expect("the menu is never empty")
+        .expect("there is always a length")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The boxes are centred and the hint is pinned to the bottom, so the two
-    /// grow towards each other as entries are added. Nothing in the drawing code
-    /// notices when they meet — it would just overlap — so it is checked here.
-    ///
-    /// Measured against [`BOX_HEIGHT`] rather than the label: the box is the
-    /// taller of the two, and it is the box that would touch the hint first.
+    /// The same growing-towards-each-other problem the menu has, checked the
+    /// same way. Two rows leave room to spare, which is the point of checking:
+    /// it says so rather than leaving it to be assumed.
     #[test]
-    fn the_entries_stay_clear_of_the_hint_line() {
+    fn the_rows_stay_clear_of_the_hint_line() {
         const PANEL: Size = Size::new(240, 135);
 
         let bounds = Rectangle::new(Point::zero(), PANEL);
         let usable = usable_width(&bounds);
         let bottom = PANEL.height as i32;
 
-        let rows = MenuItem::ALL.len() as i32;
+        let rows = SeedLength::ALL.len() as i32;
         let first_row = bounds.center().y - (rows - 1) * ROW_HEIGHT / 2;
         let last_row = first_row + (rows - 1) * ROW_HEIGHT;
 
@@ -182,8 +173,6 @@ mod tests {
         );
     }
 
-    /// A box has to be tall enough for the face the labels are drawn in, or the
-    /// text is clipped by its own frame.
     #[test]
     fn a_box_is_taller_than_the_label_in_it() {
         const PANEL: Size = Size::new(240, 135);
@@ -197,7 +186,13 @@ mod tests {
         );
     }
 
-    /// Height of `text` in the face the menu would pick for it.
+    #[test]
+    fn every_length_has_a_label() {
+        for length in SeedLength::ALL {
+            assert!(!label(length).is_empty(), "{length:?} has no label");
+        }
+    }
+
     fn text_height(text: &str, usable: u32) -> i32 {
         best_fit_font(&BODY_FONTS, text, usable)
             .get_rendered_dimensions(text, Point::zero(), VerticalPosition::Center)
@@ -205,12 +200,5 @@ mod tests {
             .bounding_box
             .map(|box_| box_.size.height as i32)
             .unwrap_or_default()
-    }
-
-    #[test]
-    fn every_entry_has_a_label() {
-        for item in MenuItem::ALL {
-            assert!(!label(item).is_empty(), "{item:?} has no label");
-        }
     }
 }

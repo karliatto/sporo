@@ -1,6 +1,9 @@
 //! What the panel should be showing, as the application sees it.
 
-use sporo_core::{bip39::Mnemonic, flips::Flips};
+use sporo_core::{
+    bip39::{Mnemonic, SeedLength},
+    flips::Flips,
+};
 
 use crate::{menu::MenuItem, word_entry::WordEntry};
 
@@ -31,7 +34,19 @@ pub enum View<'a> {
     About {
         version: &'static str,
     },
-    Words(&'a WordEntry),
+    /// Choosing how long the phrases a tool is about to read are.
+    SeedLengthPick {
+        selected: SeedLength,
+    },
+    Words {
+        entry: &'a WordEntry,
+        /// Which phrase is being typed, for a tool that reads more than one.
+        /// `None` when there is only one and saying so would be noise.
+        label: Option<&'static str>,
+        /// Why the phrase as it stands was refused, shown in place of the
+        /// legend. `None` when nothing is wrong.
+        notice: Option<&'static str>,
+    },
     Coin(&'a Flips),
     /// `page` counts from 0, and is always below [`phrase_pages`].
     Phrase {
